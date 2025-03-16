@@ -24,6 +24,7 @@ from beartype import beartype as typechecker
 from jax import Array
 from jax import numpy as jnp
 from jax import tree_util as jtu
+from jax._src import ad_util, core, traceback_util
 from jax._src.typing import ArrayLike
 from jax.interpreters.ad import JVPTrace, JVPTracer
 from jaxtyping import Array, Bool, Float, Int, PyTree, jaxtyped
@@ -112,3 +113,15 @@ class custom_vmap_res[*P, R](Protocol):
 
 def custom_vmap_[*P, R](f: Callable[[*P], R]) -> custom_vmap_res[*P, R]:
     return cast_unchecked()(jax.custom_batching.custom_vmap(f))
+
+
+def dict_set[K, V](d: dict[K, V], k: K) -> Callable[[V], V]:
+    def inner(v: V):
+        d[k] = v
+        return v
+
+    return inner
+
+
+def shape_of(x: ArrayLike) -> tuple[int, ...]:
+    return core.get_aval(x).shape  # type: ignore
