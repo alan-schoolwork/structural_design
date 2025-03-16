@@ -15,10 +15,9 @@ from jax import tree_util as jtu
 from jax._src.typing import ArrayLike, DType, Shape
 from jax.experimental.checkify import check, checkify
 from jaxtyping import Array, Bool, Float, Int, PyTree, jaxtyped
-from pintax import areg, get_value, quantity, unitify, ureg
+from pintax import areg, convert_unit, quantity, unitify, ureg
 from pintax._utils import pretty_print
 from pintax.functions import lstsq
-from pintax.unstable import convert_unit
 
 from lib.beam import force_profile, force_profile_builder
 from lib.checkify import checkify_simple

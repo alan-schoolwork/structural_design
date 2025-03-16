@@ -15,7 +15,7 @@ from jax._src.typing import ArrayLike, DType, Shape
 from jax.experimental.checkify import check, checkify
 from jaxtyping import Array, Bool, Float, Int, PyTree, jaxtyped
 from matplotlib.axes import Axes
-from pintax import areg, get_value, quantity, unitify, ureg
+from pintax import areg, quantity, unitify, ureg
 from pintax.functions import lstsq
 
 from lib.beam import force_profile, force_profile_builder
