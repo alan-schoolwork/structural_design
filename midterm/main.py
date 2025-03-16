@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -12,6 +13,7 @@ import numpy as np
 import oryx
 import sympy as s
 import sympy2jax
+from jax import Array, lax
 from jax import tree_util as jtu
 from jax.experimental.checkify import check, checkify
 from pintax import areg, convert_unit, quantity, unitify, ureg
@@ -20,7 +22,7 @@ from pintax.functions import lstsq
 
 from lib.beam import force_profile, force_profile_builder
 from lib.checkify import checkify_simple
-from lib.graph import graph, graph_builder
+from lib.graph import graph, point
 from lib.jax_utils import debug_print, flatten_handler
 from lib.lstsq import flstsq, flstsq_checked
 from lib.plot import plot_unit
@@ -42,10 +44,14 @@ def main():
 
         print("tracing", build_graph)
 
-        g = graph_builder.create(
-            default_dist=areg.inch,
-            default_force=areg.force_pound,
-        )
+        g = graph.create()
+
+        def inner(x: Array):
+            g.add_point(point(jnp.array([x * 5.0, x * 2.0])))
+
+        jax.vmap(inner)(jnp.arange(10) * 1.0 * areg.meters)
+
+        assert False
 
         radius = 29.5 * areg.meters
         height = 18.0 * areg.meters
@@ -57,6 +63,11 @@ def main():
             r=radius,
             h=height,
         )
+
+        for i in range(n_support):
+            a = (i / n_support) * 2 * math.pi
+            p_ground = g.point("ground", jnp.cos(a) * radius, jnp.sin(a) * radius, 0.0)
+
         print(sphere_center_height)
 
         a1 = g.point(0.0, 0.0)

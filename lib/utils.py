@@ -4,8 +4,20 @@ import itertools
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Concatenate, Iterable, Never, final
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Concatenate,
+    Iterable,
+    Never,
+    Protocol,
+    TypeVar,
+    Unpack,
+    final,
+)
 
+import equinox as eqx
 import jax
 import sympy as s
 from beartype import beartype as typechecker
@@ -73,3 +85,30 @@ jit = _wrap_jit(jax.jit)
 
 def debug_callback[**P](f: Callable[P, None], *args: P.args, **kwargs: P.kwargs):
     jax.debug.callback(f, *args, **kwargs)
+
+
+def tree_at_[T, N](
+    where: Callable[[T], N],
+    pytree: T,
+    replace: N | None = None,
+    replace_fn: Callable[[N], N] | None = None,
+) -> T:
+    kwargs = {}
+    if replace is not None:
+        kwargs["replace"] = replace
+    if replace_fn is not None:
+        kwargs["replace_fn"] = replace_fn
+
+    return eqx.tree_at(where=where, pytree=pytree, **kwargs)
+
+
+class custom_vmap_res[*P, R](Protocol):
+    def __call__(self, *args: *P) -> R: ...
+
+    def def_vmap(
+        self, f: Callable[[int, tuple[*P], *P], tuple[R, R]], /
+    ) -> Callable: ...
+
+
+def custom_vmap_[*P, R](f: Callable[[*P], R]) -> custom_vmap_res[*P, R]:
+    return cast_unchecked()(jax.custom_batching.custom_vmap(f))
