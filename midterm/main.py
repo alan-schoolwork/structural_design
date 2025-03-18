@@ -23,19 +23,19 @@ from pintax import areg, convert_unit, quantity, sync_units, unitify, ureg
 from pintax._utils import pretty_print
 from pintax.functions import lstsq
 
-from lib.batched import batched, do_batch, tree_do_batch, unbatch
+from lib.batched import batched, batched_vmap, do_batch, tree_do_batch, unbatch
 from lib.beam import force_profile, force_profile_builder
 from lib.checkify import checkify_simple
 from lib.graph import graph_t, point, pointid
 from lib.jax_utils import debug_print, flatten_handler
 from lib.lstsq import flstsq, flstsq_checked
 from lib.plot import plot_unit
-from lib.utils import bval, debug_callback, fval, ival, jit, unique
+from lib.utils import blike, bval, debug_callback, fval, ival, jit, unique
 
-jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_platform_name", "cpu")
-jax.config.update("jax_debug_nans", True)
-jax.config.update("jax_debug_infs", True)
+# jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_platform_name", "cpu")
+# jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_debug_infs", True)
 
 np.set_printoptions(precision=3, suppress=True)
 
@@ -86,230 +86,296 @@ def _polar(ang: ArrayLike, r: ArrayLike) -> Array:
     return jnp.array([jnp.cos(ang), jnp.sin(ang)]) * r
 
 
-@unitify
-def main():
+@jit
+def build_graph() -> graph_t:
+    print("tracing", build_graph)
 
     x, y, r, h = s.symbols("x y r h")
 
-    x1, y1, x2, y2 = s.symbols("x1 y1 x2 y2")
-    r1, r2 = s.symbols("r1, r2")
+    radius = 29.5 * areg.meters
+    height = 18.0 * areg.meters
 
-    def build_graph() -> graph_t:
+    sphere_center_height = -sympy2jax.SymbolicModule(
+        unique(s.solve(s.Eq(x**2 + r**2, (x + h) ** 2), x)), make_array=False
+    )(
+        r=radius,
+        h=height,
+    )
+    ball_rad = height - sphere_center_height
 
-        print("tracing", build_graph)
+    # x**2 + y**2 + (z-(-h))**2 == r**2
 
-        radius = 29.5 * areg.meters
-        height = 18.0 * areg.meters
+    def _project_get_h(p: Array) -> Array:
+        # return jnp.array(0.0)
+        assert p.shape == (2,)
+        return jnp.sqrt(ball_rad**2 - jnp.sum(p**2)) + sphere_center_height
 
-        sphere_center_height = -sympy2jax.SymbolicModule(
-            unique(s.solve(s.Eq(x**2 + r**2, (x + h) ** 2), x)), make_array=False
-        )(
-            r=radius,
-            h=height,
-        )
-        ball_rad = height - sphere_center_height
+    def add_point(
+        g: graph_t,
+        p: Array,
+        unbatch_dims: tuple[int, ...] = (),
+        *,
+        fixed: blike = False,
+    ):
+        h = _project_get_h(p)
+        coord = jnp.array([p[0], p[1], h])
+        return g.add_point(coord, unbatch_dims, fixed=fixed)
 
-        # x**2 + y**2 + (z-(-h))**2 == r**2
-
-        def _project_get_h(p: Array) -> Array:
-            # return jnp.array(0.0)
-            assert p.shape == (2,)
-            return jnp.sqrt(ball_rad**2 - jnp.sum(p**2)) + sphere_center_height
-
-        def add_point(g: graph_t, p: Array, unbatch_dims: tuple[int, ...] = ()):
-            h = _project_get_h(p)
-            coord = jnp.array([p[0], p[1], h])
-            return g.add_point(coord, unbatch_dims)
-
-        def batched_connect(unbatch_dims: tuple[int, ...]):
-            def wrapped(a: batched[pointid], b: batched[pointid]):
-                nonlocal g
-                g = g.add_connection(a.unwrap(), b.unwrap(), unbatch_dims)
-
-            return wrapped
-
-        g = graph_t.create()
-
-        g, center_top = add_point(g, jnp.array([0.0, 0.0]) * areg.m)
-
-        vert_rad = 27.0 * areg.meters
-        vert_rad2 = 26.0 * areg.meters
-        n_support = 36
-        support_res = math.pi * 2 / n_support
-
-        def inner(i: Array):
+    def batched_connect(unbatch_dims: tuple[int, ...]):
+        def wrapped(a: batched[pointid], b: batched[pointid]):
             nonlocal g
+            g = g.add_connection(a.unwrap(), b.unwrap(), unbatch_dims)
 
-            ang = support_res * i
-            g, outer = add_point(g, _polar(ang, radius), (n_support,))
-            tmp = _polar(ang, vert_rad)
-            g, vert_top = add_point(g, tmp, (n_support,))
-            g, vert_bot = g.add_point(jnp.array([tmp[0], tmp[1], 0.0]), (n_support,))
+        return wrapped
 
-            g, vert_top2 = add_point(
-                g, _polar(ang + support_res / 2, vert_rad2), (n_support,)
+    g = graph_t.create()
+
+    g, center_top = add_point(g, jnp.array([0.0, 0.0]) * areg.m)
+
+    vert_rad = 27.0 * areg.meters
+    vert_rad2 = 26.0 * areg.meters
+    n_support = 36
+    support_res = math.pi * 2 / n_support
+
+    def inner(i: Array):
+        nonlocal g
+
+        ang = support_res * i
+        g, outer = add_point(g, _polar(ang, radius), (n_support,), fixed=True)
+        tmp = _polar(ang, vert_rad)
+        g, vert_top = add_point(g, tmp, (n_support,))
+        g, vert_bot = g.add_point(
+            jnp.array([tmp[0], tmp[1], 0.0]), (n_support,), fixed=True
+        )
+
+        g, vert_top2 = add_point(
+            g, _polar(ang + support_res / 2, vert_rad2), (n_support,)
+        )
+        g = g.add_connection(vert_top, outer, (n_support,))
+        g = g.add_connection(vert_top, vert_bot, (n_support,))
+        g = g.add_connection(vert_top, vert_top2, (n_support,))
+
+        vert_top2_ = batched.create_unbatch(vert_top2, (n_support,))
+        batched.concat([vert_top2_[1:], vert_top2_[:1]])
+        vert_top2_shifted = tree_do_batch(
+            batched.concat([vert_top2_[-1:], vert_top2_[:-1]]), dims=(n_support,)
+        ).unwrap()
+        g = g.add_connection(vert_top, vert_top2_shifted, (n_support,))
+
+        return batched.create(vert_top2)
+
+    vert_top2 = jax.vmap(inner)(jnp.arange(n_support))
+
+    def draw_circle(c: Array, r: Array):
+        res = 300
+
+        def for_ang(ang: Array):
+            nonlocal g
+            g, ans = add_point(g, c + _polar(ang, r), (res,))
+            return batched.create(ans)
+
+        pts = jax.vmap(for_ang)(jnp.arange(res) / res * 2 * math.pi)
+        jax.vmap(batched_connect((res,)))(pts, batched.concat([pts[1:], pts[:1]]))
+
+    r1 = 7.5 * areg.meters
+    r2 = 25.0 * areg.meters
+    r_arc = 15.0 * areg.meters
+
+    # draw_circle(jnp.array([0.0, 0.0]) * areg.m, r1)
+    # draw_circle(jnp.array([0.0, 0.0]) * areg.m, r2)
+    # draw_circle(jnp.array([0.0, 0.0]) * areg.m, radius)
+
+    def _arc_centers(p1: Array, p2: Array):
+        m = (p1 + p2) / 2
+        vc = p2 - p1
+        dist = jnp.sqrt(r_arc**2 - jnp.sum((vc / 2) ** 2))
+        vc_x, vc_y = vc / jnp.linalg.norm(vc) * dist
+        v = jnp.array([vc_y, -vc_x])
+        return m + v
+
+    # n_arcs = 36
+    n_arcs = 108
+    arc_skip = n_arcs // 12
+    n_rings = arc_skip * 2 + 1
+
+    ang_res = math.pi * 2 / n_arcs
+
+    def inner2(i: Array):
+        a1 = ang_res * i
+        a2 = a1 - ang_res * arc_skip
+        a3 = a1 + ang_res * arc_skip
+
+        p1 = _polar(a1, r1)
+        p2 = _polar(a2, r2)
+        p3 = _polar(a3, r2)
+
+        c1 = _arc_centers(p3, p1)
+        c2 = _arc_centers(p1, p2)
+        return batched.create(c1), batched.create(c2)
+
+    c1s, c2s = jax.vmap(inner2)(jnp.arange(n_arcs))
+
+    # for i in range(10):
+    #     draw_circle(c1s[i].unwrap(), r_arc)
+    # draw_circle(c1s[1].unwrap(), r_arc)
+    # draw_circle(c2s[0].unwrap(), r_arc)
+    # draw_circle(c2s[1].unwrap(), r_arc)
+    # draw_circle(c2s[arc_skip * 2].unwrap(), r_arc)
+
+    # draw_circle(c2s[1].unwrap(), r_arc)
+
+    # print(c1s[0].unwrap())
+    # print(c2s[0].unwrap())
+    # cs1
+    # tmp = circle_intersection(
+    #     c1s[0].unwrap(),
+    #     c2s[0].unwrap(),
+    #     r_arc,
+    #     r_arc,
+    # )
+    # print("tmp", tmp)
+
+    c2s_dup = batched.concat([c2s, c2s])
+
+    def one_arc(idx: Array):
+        intersect_with = c2s_dup.dynamic_slice((idx,), (n_rings,))
+
+        def one_intersection(c2: batched[Array]):
+            nonlocal g
+            it, _ = circle_intersection(
+                c1s[idx].unwrap(),
+                c2.unwrap(),
+                r_arc,
+                r_arc,
             )
-            g = g.add_connection(vert_top, outer, (n_support,))
-            g = g.add_connection(vert_top, vert_bot, (n_support,))
-            g = g.add_connection(vert_top, vert_top2, (n_support,))
+            g, itp = add_point(g, it, (n_arcs, n_rings))
+            return batched.create(itp)
 
-            vert_top2_ = batched.create_unbatch(vert_top2, (n_support,))
-            batched.concat(vert_top2_[1:], vert_top2_[:1])
-            vert_top2_shifted = tree_do_batch(
-                batched.concat(vert_top2_[-1:], vert_top2_[:-1]), dims=(n_support,)
-            ).unwrap()
-            g = g.add_connection(vert_top, vert_top2_shifted, (n_support,))
+        ips = jax.vmap(one_intersection)(intersect_with)
+        jax.vmap(batched_connect((n_arcs, n_rings - 1)))(ips[:-1], ips[1:])
+        return ips
 
-            return batched.create(vert_top2)
+    net = jax.vmap(one_arc)(jnp.arange(n_arcs))
+    assert net.batch_dims() == (n_arcs, n_rings)
 
-        vert_top2 = jax.vmap(inner)(jnp.arange(n_support))
+    def reverse_arc(idx: Array):
 
-        def draw_circle(c: Array, r: Array):
-            res = 300
+        def inner(idx2: Array):
+            idxw = idx - idx2
+            idxw = lax.select(idxw >= 0, on_true=idxw, on_false=idxw + n_arcs)
+            ans = net[idxw][idx2]
+            assert ans.batch_dims() == ()
+            return ans
 
-            def for_ang(ang: Array):
-                nonlocal g
-                g, ans = add_point(g, c + _polar(ang, r), (res,))
-                return batched.create(ans)
+        rev_arc = jax.vmap(inner)(jnp.arange(n_rings))
 
-            pts = jax.vmap(for_ang)(jnp.arange(res) / res * 2 * math.pi)
-            jax.vmap(batched_connect((res,)))(pts, batched.concat(pts[1:], pts[:1]))
+        jax.vmap(batched_connect((n_arcs, n_rings - 1)))(rev_arc[:-1], rev_arc[1:])
 
-        r1 = 7.5 * areg.meters
-        r2 = 25.0 * areg.meters
-        r_arc = 15.0 * areg.meters
+    jax.vmap(reverse_arc)(jnp.arange(n_arcs))
 
-        # draw_circle(jnp.array([0.0, 0.0]) * areg.m, r1)
-        # draw_circle(jnp.array([0.0, 0.0]) * areg.m, r2)
-        # draw_circle(jnp.array([0.0, 0.0]) * areg.m, radius)
+    def base_conections(idx: Array):
+        vt = vert_top2[idx]
 
-        def _arc_centers(p1: Array, p2: Array):
-            m = (p1 + p2) / 2
-            vc = p2 - p1
-            dist = jnp.sqrt(r_arc**2 - jnp.sum((vc / 2) ** 2))
-            vc_x, vc_y = vc / jnp.linalg.norm(vc) * dist
-            v = jnp.array([vc_y, -vc_x])
-            return m + v
+        def connect_one(idx2: Array):
+            idx_ = idx * 3 - arc_skip + idx2
+            idx_ = lax.select(idx_ >= 0, idx_, idx_ + n_arcs)
+            idx_ = lax.select(idx_ < n_arcs, idx_, idx_ - n_arcs)
 
-        # n_arcs = 36
-        n_arcs = 108
-        arc_skip = n_arcs // 12
-        n_rings = arc_skip * 2 + 1
+            batched_connect((n_support, 4))(vert_top2[idx], net[idx_, -1])
 
-        ang_res = math.pi * 2 / n_arcs
+        jax.vmap(connect_one)(jnp.array([0, 1, 2, 3]))
 
-        def inner2(i: Array):
-            a1 = ang_res * i
-            a2 = a1 - ang_res * arc_skip
-            a3 = a1 + ang_res * arc_skip
+    jax.vmap(base_conections)(jnp.arange(n_support))
 
-            p1 = _polar(a1, r1)
-            p2 = _polar(a2, r2)
-            p3 = _polar(a3, r2)
+    def connect_ring(l: int):
+        layer = net[:, l]
+        jax.vmap(batched_connect((n_arcs,)))(
+            layer, batched.concat([layer[1:], layer[:1]])
+        )
 
-            c1 = _arc_centers(p3, p1)
-            c2 = _arc_centers(p1, p2)
-            return batched.create(c1), batched.create(c2)
+    connect_ring(-1)
+    connect_ring(0)
+    # n_rings
+    # print("i1s", ips)
 
-        c1s, c2s = jax.vmap(inner2)(jnp.arange(n_arcs))
+    # print("i1", i1)
+    # print("i2", i2)
 
-        # for i in range(10):
-        #     draw_circle(c1s[i].unwrap(), r_arc)
-        # draw_circle(c1s[1].unwrap(), r_arc)
-        # draw_circle(c2s[0].unwrap(), r_arc)
-        # draw_circle(c2s[1].unwrap(), r_arc)
-        # draw_circle(c2s[arc_skip * 2].unwrap(), r_arc)
+    # g, i1p = add_point(g, i1)
+    # g, i2p = add_point(g, i2)
+    # g = g.add_connection(i1p, i2p)
 
-        # draw_circle(c2s[1].unwrap(), r_arc)
+    # p1 =
 
-        # print(c1s[0].unwrap())
-        # print(c2s[0].unwrap())
-        # cs1
-        # tmp = circle_intersection(
-        #     c1s[0].unwrap(),
-        #     c2s[0].unwrap(),
-        #     r_arc,
-        #     r_arc,
-        # )
-        # print("tmp", tmp)
+    # tmp = jnp.array([0.0, 60.0]) * areg.m
 
-        c2s_dup = batched.concat(c2s, c2s)
+    return g
 
-        def one_arc(idx: Array):
-            intersect_with = c2s_dup.dynamic_slice((idx,), (n_rings,))
 
-            def one_intersection(c2: batched[Array]):
-                nonlocal g
-                it, _ = circle_intersection(
-                    c1s[idx].unwrap(),
-                    c2.unwrap(),
-                    r_arc,
-                    r_arc,
-                )
-                g, itp = add_point(g, it, (n_arcs, n_rings))
-                return batched.create(itp)
+# @jit
+@unitify
+def solve_forces():
+    g = build_graph()
 
-            ips = jax.vmap(one_intersection)(intersect_with)
-            jax.vmap(batched_connect((n_arcs, n_rings - 1)))(ips[:-1], ips[1:])
-            return ips
+    connnection_forces = g._connections.map(lambda _: jnp.array(0.0) * areg.pound)
 
-        net = jax.vmap(one_arc)(jnp.arange(n_arcs))
-        assert net.batch_dims() == (n_arcs, n_rings)
+    def get_eqs(connnection_forces=connnection_forces):
+        aggr = g.sum_annotations(
+            g._points.map(lambda _: jnp.zeros(3) * areg.pound),
+            g.forces_aggregate(connnection_forces, density=1.0 * areg.pound / areg.m),
+        )
+        aggr_filtered = batched_vmap(
+            lambda p, f: lax.select(p.fixed, on_true=jnp.zeros_like(f), on_false=f),
+            g._points,
+            aggr,
+        )
+        return aggr_filtered.unflatten()
 
-        def reverse_arc(idx: Array):
+    return flstsq(get_eqs, connnection_forces)
 
-            def inner(idx2: Array):
-                idxw = idx - idx2
-                idxw = lax.select(idxw >= 0, on_true=idxw, on_false=idxw + n_arcs)
-                ans = net[idxw][idx2]
-                assert ans.batch_dims() == ()
-                return ans
 
-            rev_arc = jax.vmap(inner)(jnp.arange(n_rings))
+def runner():
+    ans = jax.jit(solve_forces)()
+    # ans = jax.jit(solve_forces).lower().compile()
+    # print(ans.cost_analysis())
+    # print()
+    # print(ans.as_text())
 
-            jax.vmap(batched_connect((n_arcs, n_rings - 1)))(rev_arc[:-1], rev_arc[1:])
+    print(ans.residuals)
+    print(ans.rank)
+    print(ans.x)
 
-        jax.vmap(reverse_arc)(jnp.arange(n_arcs))
+    return ans
 
-        def base_conections(idx: Array):
-            vt = vert_top2[idx]
 
-            def connect_one(idx2: Array):
-                idx_ = idx * 3 - arc_skip + idx2
-                idx_ = lax.select(idx_ >= 0, idx_, idx_ + n_arcs)
-                idx_ = lax.select(idx_ < n_arcs, idx_, idx_ - n_arcs)
-
-                batched_connect((n_support, 4))(vert_top2[idx], net[idx_, -1])
-
-            jax.vmap(connect_one)(jnp.array([0, 1, 2, 3]))
-
-        jax.vmap(base_conections)(jnp.arange(n_support))
-
-        def connect_ring(l: int):
-            layer = net[:, l]
-            jax.vmap(batched_connect((n_arcs,)))(
-                layer, batched.concat(layer[1:], layer[:1])
-            )
-
-        connect_ring(-1)
-        connect_ring(0)
-        # n_rings
-        # print("i1s", ips)
-
-        # print("i1", i1)
-        # print("i2", i2)
-
-        # g, i1p = add_point(g, i1)
-        # g, i2p = add_point(g, i2)
-        # g = g.add_connection(i1p, i2p)
-
-        # p1 =
-
-        # tmp = jnp.array([0.0, 60.0]) * areg.m
-
-        return g
+@unitify
+def main():
 
     g = build_graph()
+    print("build_graph: done")
+
+    connnection_forces = g._connections.map(lambda _: jnp.array(0.0) * areg.pound)
+
+    def get_eqs(connnection_forces=connnection_forces):
+        aggr = g.sum_annotations(
+            g._points.map(lambda _: jnp.zeros(3) * areg.pound),
+            g.forces_aggregate(connnection_forces, density=1.0 * areg.pound / areg.m),
+        )
+        aggr_filtered = batched_vmap(
+            lambda p, f: lax.select(p.fixed, on_true=jnp.zeros_like(f), on_false=f),
+            g._points,
+            aggr,
+        )
+        return aggr_filtered.unflatten()
+
+    ans = jit(lambda: flstsq(get_eqs, connnection_forces))()
+    # print(ans)
+    print(ans.residuals)
+    print(ans.rank)
+    print(ans.x)
+
+    # jax.vmap(
+
     # print(g)
 
     p0s, p1s = g.get_lines(mul=1 / areg.m)
@@ -320,13 +386,29 @@ def main():
     ax = fig.add_subplot(111, projection="3d")
     assert isinstance(ax, Axes3D)
 
-    lim = 30
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    ax.set_zlim(-lim, lim)
+    # lim = 30
+    # ax.set_xlim(-lim, lim)
+    # ax.set_ylim(-lim, lim)
+    # ax.set_zlim(-lim, lim)
+
+    ax.set_xlim(-20, 10)
+    ax.set_ylim(-10, 20)
+    ax.set_zlim(-10, 20)
+
     line_collection = Line3DCollection(list(zip(p0s_, p1s_)))
     ax.add_collection3d(line_collection)
     # ax.plot(xs, ys, zs)
+
+    fixed_points, ct = g._points.filter(lambda x: x.fixed)
+    fixed_points = fixed_points[: int(ct)].map(lambda x: x.coords).unflatten() / areg.m
+
+    ax.scatter(
+        fixed_points[:, 0].tolist(),
+        fixed_points[:, 1].tolist(),
+        fixed_points[:, 2].tolist(),  # type: ignore
+        c="r",
+        marker="o",
+    )
 
     ax.set_xlabel("X")
     ax.set_ylabel("Y")

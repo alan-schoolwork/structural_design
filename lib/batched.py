@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Concatenate, Sequence, overload
 
 import equinox as eqx
 import jax
@@ -20,7 +20,7 @@ from pintax import areg, convert_unit
 from pintax._utils import pp_obj, pretty_print
 from pintax.unstable import unitify_rules
 
-from .utils import cast_unchecked, dict_set, shape_of
+from .utils import blike, cast_unchecked, dict_set, ival, shape_of, tree_at_
 
 
 def _remove_prefix(v: tuple[int, ...], prefix: tuple[int, ...]) -> tuple[int, ...]:
@@ -31,6 +31,15 @@ def _remove_prefix(v: tuple[int, ...], prefix: tuple[int, ...]) -> tuple[int, ..
 def _remove_suffix(v: tuple[int, ...], suffix: tuple[int, ...]) -> tuple[int, ...]:
     assert v[len(v) - len(suffix) :] == suffix
     return v[: len(v) - len(suffix)]
+
+
+def _batched_treemap_of[**P](fn: Callable[Concatenate[tuple[Array, ...], P], Array]):
+    def inner[T](
+        batches: Sequence[batched[T]], *args: P.args, **kwargs: P.kwargs
+    ) -> batched[T]:
+        return batched_treemap(lambda *bufs: fn(bufs, *args, **kwargs), *batches)
+
+    return inner
 
 
 class batched[T](eqx.Module):
@@ -90,16 +99,8 @@ class batched[T](eqx.Module):
             self,
         )
 
-    @staticmethod
-    def concat[T2](*args: batched[T2], axis: int = 0) -> batched[T2]:
-        try:
-            for x in args:
-                assert x._pytree == args[0]._pytree
-                assert x._shapes == args[0]._shapes
-        except Exception as e:
-            raise TypeError("invalid args:", args) from e
-
-        return jtu.tree_map(lambda *args_leaf: jnp.concat(args_leaf, axis=axis), *args)
+    concat = staticmethod(_batched_treemap_of(jnp.concat))
+    stack = staticmethod(_batched_treemap_of(jnp.stack))
 
     def __getitem__(self, idx: Any) -> batched[T]:
         ans = jtu.tree_map(lambda x: x[idx], self)
@@ -124,6 +125,98 @@ class batched[T](eqx.Module):
 
     def __len__(self) -> int:
         return self.batch_dims()[0]
+
+    def map[T2](self, f: Callable[[T], T2]) -> batched[T2]:
+        if self.batch_dims() == ():
+            return batched.create(f(self.unwrap()))
+
+        def inner(me: batched[T]) -> batched[T2]:
+            return me.map(f)
+
+        return jax.vmap(inner)(self)
+
+    def filter(self, f: Callable[[T], blike]) -> tuple[batched[T], ival]:
+        (n,) = self.batch_dims()
+
+        bools = self.map(f).unflatten()
+        assert isinstance(bools, Array)
+        assert bools.shape == (n,)
+
+        idxs = jnp.nonzero(bools, size=n, fill_value=0)
+
+        ans: batched[T] = jtu.tree_map(lambda x: x[idxs], self)
+        assert ans.batch_dims() == (n,)
+        return ans, bools.sum()
+
+
+@overload
+def batched_vmap[T1, R](f: Callable[[T1], R], a1: batched[T1], /) -> batched[R]: ...
+@overload
+def batched_vmap[T1, T2, R](
+    f: Callable[[T1, T2], R], a1: batched[T1], a2: batched[T2], /
+) -> batched[R]: ...
+@overload
+def batched_vmap[T1, T2, T3, R](
+    f: Callable[[T1, T2, T3], R], a1: batched[T1], a2: batched[T2], a3: batched[T3], /
+) -> batched[R]: ...
+
+
+def batched_vmap[R](f: Callable[..., R], *args: batched) -> batched[R]:
+    bds = [x.batch_dims() for x in args]
+    for bd in bds:
+        assert bd == bds[0]
+    if bds[0] == ():
+        return batched.create(f(*(x.unwrap() for x in args)))
+
+    def inner(*args: batched) -> batched[R]:
+        return batched_vmap(f, *args)
+
+    return jax.vmap(inner)(*args)
+
+
+@overload
+def batched_treemap[T](
+    f: Callable[[Array], Array], a1: batched[T], /
+) -> batched[T]: ...
+@overload
+def batched_treemap[T](
+    f: Callable[[Array, Array], Array], a1: batched[T], a2: batched[T], /
+) -> batched[T]: ...
+@overload
+def batched_treemap[T](
+    f: Callable[[*tuple[Array, ...]], Array], /, *args: batched[T]
+) -> batched[T]: ...
+
+
+def batched_treemap[T](f: Callable[..., Array], /, *args: batched[T]) -> batched[T]:
+    try:
+        for x in args:
+            assert x._pytree == args[0]._pytree
+            assert x._shapes == args[0]._shapes
+    except Exception as e:
+        raise TypeError("invalid args:", args) from e
+
+    bds = [x.batch_dims() for x in args]
+
+    def handle_one(shape: tuple[int, ...], *bufs: Array):
+        if len(shape) == 0:
+            ans = f(*bufs)
+            # TODO: dont use args[0] shape as return so that dtype can be changed
+            assert ans.dtype == bufs[0].dtype
+            return ans
+        else:
+            return jax.vmap(
+                lambda *bufs: handle_one(shape[:-1], *bufs),
+                in_axes=-1,
+                out_axes=-1,
+                axis_size=shape[-1],
+            )(*bufs)
+
+    new_bufs = [
+        handle_one(s.shape, *bufs)
+        for (s, *bufs) in zip(args[0]._shapes, *(x._bufs for x in args))
+    ]
+    return tree_at_(lambda x: x._bufs, args[0], new_bufs)
 
 
 unbatch_p = core.Primitive("unbatch")

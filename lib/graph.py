@@ -15,13 +15,15 @@ from jax.typing import ArrayLike
 from pintax import areg, convert_unit
 from pintax._utils import pp_obj, pretty_print
 
-from lib.batched import batched, do_batch, tree_do_batch, unbatch
+from lib.batched import batched, batched_treemap, do_batch, tree_do_batch, unbatch
 
-from .utils import cast_unchecked, custom_vmap_, ival, tree_at_
+from .utils import blike, bval, cast_unchecked, custom_vmap_, fval, ival, tree_at_
 
 
 class point(eqx.Module):
     coords: Array
+
+    fixed: blike
 
     def __repr__(self):
         return pp_obj("point", pretty_print(self.coords)).format()
@@ -42,9 +44,15 @@ class connection(eqx.Module):
         return pp_obj("connection", pretty_print(self.a), pretty_print(self.b)).format()
 
 
+class force_annotation(eqx.Module):
+    p: pointid
+    f: Array
+
+
 class graph_t(eqx.Module):
     _points: batched[point]
     _connections: batched[connection]
+    _external_forces: batched[force_annotation]
 
     def __repr__(self):
         return pp_obj(
@@ -57,17 +65,24 @@ class graph_t(eqx.Module):
     def create() -> graph_t:
         _id = pointid(jnp.array(0))
         return graph_t(
-            _points=batched.create(point(jnp.zeros(3))).repeat(0),
+            _points=batched.create(point(jnp.zeros(3), jnp.array(False))).repeat(0),
             _connections=batched.create(connection(_id, _id)).repeat(0),
+            _external_forces=batched.create(force_annotation(_id, jnp.zeros(3))).repeat(
+                0
+            ),
         )
 
     def __add__(self, mod: Callable[[graph_t], graph_t]) -> graph_t:
         return mod(self)
 
     def add_point(
-        self, c: Array, unbatch_dims: tuple[int, ...] = ()
+        self,
+        c: Array,
+        unbatch_dims: tuple[int, ...] = (),
+        *,
+        fixed: blike = False,
     ) -> tuple[graph_t, pointid]:
-        return self._add_point(point(c), unbatch_dims)
+        return self._add_point(point(c, fixed), unbatch_dims)
 
     def _add_point(
         self, x: point, unbatch_dims: tuple[int, ...] = ()
@@ -82,7 +97,7 @@ class graph_t(eqx.Module):
         dims = points.batch_dims()
         count = math.prod(dims)
         idxs = self._points.count() + jnp.arange(count)
-        new_points = batched.concat(self._points, points.reshape(-1))
+        new_points = batched.concat([self._points, points.reshape(-1)])
         tmp = batched.create(pointid(idxs), (count,))
         ans_pids = batched.create(pointid(idxs), (count,)).reshape(*dims)
         return tree_at_(lambda me: me._points, self, new_points), ans_pids
@@ -99,7 +114,7 @@ class graph_t(eqx.Module):
         return tree_at_(
             lambda me: me._connections,
             self,
-            batched.concat(self._connections, cs.reshape(-1)),
+            batched.concat([self._connections, cs.reshape(-1)]),
         )
 
     def get_point(self, pid: pointid) -> point:
@@ -121,3 +136,54 @@ class graph_t(eqx.Module):
         # xs, ys, zs = jax.vmap(inner)(self._connections)
 
         # return xs.reshape(-1), ys.reshape(-1), zs.reshape(-1)
+
+    def sum_annotations(
+        self, prev: batched[Array], annotations: batched[force_annotation]
+    ) -> batched[Array]:
+        n = len(self._points)
+        assert prev.batch_dims() == (n,)
+        assert len(annotations.batch_dims()) == 1
+
+        anno_buf = annotations.unflatten()
+        buf = prev.unflatten()
+
+        return batched.create(buf.at[anno_buf.p._idx].add(anno_buf.f), batch_dims=(n,))
+
+    def add_external_force(
+        self, x: force_annotation, unbatch_dims: tuple[int, ...] = ()
+    ):
+        xs = batched.create_unbatch(x, unbatch_dims)
+        return tree_at_(
+            lambda me: me._external_forces,
+            self,
+            batched.concat([self._external_forces, xs.reshape(-1)]),
+        )
+
+    def forces_aggregate(
+        self, connection_forces: batched[Array], density: fval
+    ) -> batched[force_annotation]:
+        # connection_forces: >0 ==> compression
+        def inner(
+            c_: batched[connection], f_: batched[Array]
+        ) -> batched[force_annotation]:
+            c = c_.unwrap()
+            f = f_.unwrap()
+
+            a = self.get_point(c.a)
+            b = self.get_point(c.b)
+
+            v = b.coords - a.coords
+            v_len = jnp.linalg.norm(v)
+            v_dir = v / v_len
+
+            force_vec_on_a = -f * v_dir
+
+            force_weight = jnp.array([0.0, 0.0, -v_len * density / 2])
+
+            ans1 = batched.create(force_annotation(c.a, force_vec_on_a + force_weight))
+            ans2 = batched.create(force_annotation(c.b, -force_vec_on_a + force_weight))
+
+            return batched.stack([ans1, ans2])
+
+        ans = jax.vmap(inner)(self._connections, connection_forces)
+        return ans.reshape(-1)

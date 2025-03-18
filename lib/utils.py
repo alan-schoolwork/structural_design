@@ -38,6 +38,8 @@ fval = Float[Array, ""]
 ival = Int[Array, ""]
 bval = Bool[Array, ""]
 
+blike = Bool[Array, ""] | bool
+
 
 @final
 class _empty_t:
@@ -86,6 +88,11 @@ jit = _wrap_jit(jax.jit)
 
 def debug_callback[**P](f: Callable[P, None], *args: P.args, **kwargs: P.kwargs):
     jax.debug.callback(f, *args, **kwargs)
+
+
+class _marker_fn[N]:
+    def __call__(self, x: N) -> N:
+        return x
 
 
 def tree_at_[T, N](
