@@ -18,6 +18,7 @@ class flstsq_r[T, R](eqx.Module):
     const: R
 
     x: T
+    errors: R
     residuals: Array
     rank: Array
     svals: Array
@@ -88,6 +89,7 @@ def flstsq[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
 
     # Solve the linear system mat @ δx ≈ −const (a least-squares problem).
     delta_args_flat, residuals, rank, svals = lstsq(mat, -const_flat, rcond=None)
+    errors_flat = mat @ delta_args_flat + const_flat
 
     # Construct the new input by adding δx to the original arg_bufs.
     updated_bufs = [
@@ -98,10 +100,16 @@ def flstsq[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
 
     # Unflatten const_flat so it matches the structure of the original function output.
     const_unflat = split_out(const_flat)
+    # mat @
 
     # Return the result dataclass with the original output as const and updated input x.
     return flstsq_r(
-        const=const_unflat, x=new_x, residuals=residuals, rank=rank, svals=svals
+        const=const_unflat,
+        x=new_x,
+        errors=split_out(errors_flat),
+        residuals=residuals,
+        rank=rank,
+        svals=svals,
     )
 
 

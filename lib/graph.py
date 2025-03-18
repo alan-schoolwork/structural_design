@@ -15,7 +15,14 @@ from jax.typing import ArrayLike
 from pintax import areg, convert_unit
 from pintax._utils import pp_obj, pretty_print
 
-from lib.batched import batched, batched_treemap, do_batch, tree_do_batch, unbatch
+from lib.batched import (
+    batched,
+    batched_treemap,
+    batched_vmap,
+    do_batch,
+    tree_do_batch,
+    unbatch,
+)
 
 from .utils import blike, bval, cast_unchecked, custom_vmap_, fval, ival, tree_at_
 
@@ -120,22 +127,17 @@ class graph_t(eqx.Module):
     def get_point(self, pid: pointid) -> point:
         return self._points[pid._idx].unwrap()
 
-    def get_lines(self, mul: ArrayLike = 0.0):
+    def get_lines(self) -> Array:
+        # return accepted by Line3DCollection after tolist
+        # which wants
+        # list[tuple[list[float], list[float]]]
 
-        def inner(c_: batched[connection]):
-            c = c_.unwrap()
-            p1 = self.get_point(c.a).coords * mul
-            p2 = self.get_point(c.b).coords * mul
-            return p1, p2
-            # ps = jnp.array([p1, p2])
-            # return ps[:, 0], ps[:, 1], ps[:, 2]
+        def inner(c: connection):
+            p1 = self.get_point(c.a).coords
+            p2 = self.get_point(c.b).coords
+            return jnp.stack([p1, p2])
 
-        return jax.vmap(inner)(self._connections)
-
-        # return p1_
-        # xs, ys, zs = jax.vmap(inner)(self._connections)
-
-        # return xs.reshape(-1), ys.reshape(-1), zs.reshape(-1)
+        return self._connections.map(inner).unflatten()
 
     def sum_annotations(
         self, prev: batched[Array], annotations: batched[force_annotation]

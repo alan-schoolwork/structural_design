@@ -42,6 +42,15 @@ def _batched_treemap_of[**P](fn: Callable[Concatenate[tuple[Array, ...], P], Arr
     return inner
 
 
+def _batched_treemap_of_one[**P](
+    fn: Callable[Concatenate[Array, P], Array],
+):
+    def inner[T](arg: batched[T], *args: P.args, **kwargs: P.kwargs) -> batched[T]:
+        return batched_treemap(lambda buf: fn(buf, *args, **kwargs), arg)
+
+    return inner
+
+
 class batched[T](eqx.Module):
     _bufs: list[Array]
     _shapes: list[ShapeDtypeStruct] = eqx.field(static=True)
@@ -101,6 +110,7 @@ class batched[T](eqx.Module):
 
     concat = staticmethod(_batched_treemap_of(jnp.concat))
     stack = staticmethod(_batched_treemap_of(jnp.stack))
+    roll = _batched_treemap_of_one(jnp.roll)
 
     def __getitem__(self, idx: Any) -> batched[T]:
         ans = jtu.tree_map(lambda x: x[idx], self)
@@ -127,18 +137,20 @@ class batched[T](eqx.Module):
         return self.batch_dims()[0]
 
     def map[T2](self, f: Callable[[T], T2]) -> batched[T2]:
-        if self.batch_dims() == ():
-            return batched.create(f(self.unwrap()))
+        return batched_vmap(f, self)
 
-        def inner(me: batched[T]) -> batched[T2]:
-            return me.map(f)
-
-        return jax.vmap(inner)(self)
+    def tuple_map[*T1, T2](
+        self: batched[tuple[*T1]], f: Callable[[*T1], T2]
+    ) -> batched[T2]:
+        return batched_vmap(lambda x: f(*x), self)
 
     def filter(self, f: Callable[[T], blike]) -> tuple[batched[T], ival]:
+        return self.filter_arr(self.map(f))
+
+    def filter_arr(self, bools_: batched[blike]) -> tuple[batched[T], ival]:
         (n,) = self.batch_dims()
 
-        bools = self.map(f).unflatten()
+        bools = bools_.unflatten()
         assert isinstance(bools, Array)
         assert bools.shape == (n,)
 
@@ -172,6 +184,10 @@ def batched_vmap[R](f: Callable[..., R], *args: batched) -> batched[R]:
         return batched_vmap(f, *args)
 
     return jax.vmap(inner)(*args)
+
+
+def batched_zip[T1, T2](a1: batched[T1], a2: batched[T2], /) -> batched[tuple[T1, T2]]:
+    return batched_vmap(lambda *args: args, a1, a2)
 
 
 @overload

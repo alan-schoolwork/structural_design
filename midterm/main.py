@@ -19,18 +19,36 @@ from jax._src.typing import ArrayLike
 from jax.experimental.checkify import check, checkify
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from pintax import areg, convert_unit, quantity, sync_units, unitify, ureg
+from pintax import Unit, areg, convert_unit, quantity, sync_units, unitify, ureg
 from pintax._utils import pretty_print
 from pintax.functions import lstsq
 
-from lib.batched import batched, batched_vmap, do_batch, tree_do_batch, unbatch
+from lib.batched import (
+    batched,
+    batched_vmap,
+    batched_zip,
+    do_batch,
+    tree_do_batch,
+    unbatch,
+)
 from lib.beam import force_profile, force_profile_builder
 from lib.checkify import checkify_simple
 from lib.graph import graph_t, point, pointid
 from lib.jax_utils import debug_print, flatten_handler
 from lib.lstsq import flstsq, flstsq_checked
 from lib.plot import plot_unit
-from lib.utils import blike, bval, debug_callback, fval, ival, jit, unique
+from lib.utils import (
+    blike,
+    bval,
+    cast_unchecked,
+    debug_callback,
+    fval,
+    ival,
+    jit,
+    return_of_fake,
+    unique,
+)
+from midterm.build_graph import build_graph
 
 # jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "cpu")
@@ -40,281 +58,27 @@ from lib.utils import blike, bval, debug_callback, fval, ival, jit, unique
 np.set_printoptions(precision=3, suppress=True)
 
 
+def solve_forces(g: graph_t):
+    connnection_forces = g._connections.map(lambda _: jnp.array(0.0) * areg.pound)
+
+    def get_eqs(connnection_forces=connnection_forces):
+        aggr = g.sum_annotations(
+            g._points.map(lambda _: jnp.zeros(3) * areg.pound),
+            g.forces_aggregate(connnection_forces, density=1.0 * areg.pound / areg.m),
+        )
+        aggr_filtered = batched_vmap(
+            lambda p, f: lax.select(p.fixed, on_true=jnp.zeros_like(f), on_false=f),
+            g._points,
+            aggr,
+        )
+        return aggr_filtered
+
+    pass
+
+
 @unitify
-def testfn():
-    return circle_intersection(
-        jnp.array([-1.0, 1.0]) * areg.m,
-        jnp.array([-1.0, -1.0]) * areg.m,
-        jnp.array(3.0) * areg.m,
-        jnp.array(3.0) * areg.m,
-    )
-
-
 @jit
-def circle_intersection(p1_: Array, p2_: Array, r1_v_: Array, r2_v_: Array):
-    args, u = sync_units(p1_, p2_, r1_v_, r2_v_)
-    p1, p2, r1_v, r2_v = map(jnp.array, args)
-
-    x, y = s.symbols("x y")
-    x1, y1, x2, y2 = s.symbols("x1 y1 x2 y2")
-    r1, r2 = s.symbols("r1, r2")
-
-    ans = s.solve(
-        [
-            s.Eq((x - x1) ** 2 + (y - y1) ** 2, r1**2),
-            s.Eq((x - x2) ** 2 + (y - y2) ** 2, r2**2),
-        ],
-        [x, y],
-    )
-    assert len(ans) == 2
-    f = lambda x: s.simplify(s.expand(x))
-    ans_ = (tuple(map(f, ans[0])), tuple(map(f, ans[1])))
-
-    ans0, ans1 = sympy2jax.SymbolicModule(ans_, make_array=False)(
-        x1=p1[0],
-        y1=p1[1],
-        x2=p2[0],
-        y2=p2[1],
-        r1=r1_v,
-        r2=r2_v,
-    )
-    u_ = u.as_array()
-    return jnp.array(ans0) * u_, jnp.array(ans1) * u_
-
-
-def _polar(ang: ArrayLike, r: ArrayLike) -> Array:
-    return jnp.array([jnp.cos(ang), jnp.sin(ang)]) * r
-
-
-@jit
-def build_graph() -> graph_t:
-    print("tracing", build_graph)
-
-    x, y, r, h = s.symbols("x y r h")
-
-    radius = 29.5 * areg.meters
-    height = 18.0 * areg.meters
-
-    sphere_center_height = -sympy2jax.SymbolicModule(
-        unique(s.solve(s.Eq(x**2 + r**2, (x + h) ** 2), x)), make_array=False
-    )(
-        r=radius,
-        h=height,
-    )
-    ball_rad = height - sphere_center_height
-
-    # x**2 + y**2 + (z-(-h))**2 == r**2
-
-    def _project_get_h(p: Array) -> Array:
-        # return jnp.array(0.0)
-        assert p.shape == (2,)
-        return jnp.sqrt(ball_rad**2 - jnp.sum(p**2)) + sphere_center_height
-
-    def add_point(
-        g: graph_t,
-        p: Array,
-        unbatch_dims: tuple[int, ...] = (),
-        *,
-        fixed: blike = False,
-    ):
-        h = _project_get_h(p)
-        coord = jnp.array([p[0], p[1], h])
-        return g.add_point(coord, unbatch_dims, fixed=fixed)
-
-    def batched_connect(unbatch_dims: tuple[int, ...]):
-        def wrapped(a: batched[pointid], b: batched[pointid]):
-            nonlocal g
-            g = g.add_connection(a.unwrap(), b.unwrap(), unbatch_dims)
-
-        return wrapped
-
-    g = graph_t.create()
-
-    g, center_top = add_point(g, jnp.array([0.0, 0.0]) * areg.m)
-
-    vert_rad = 27.0 * areg.meters
-    vert_rad2 = 26.0 * areg.meters
-    n_support = 36
-    support_res = math.pi * 2 / n_support
-
-    def inner(i: Array):
-        nonlocal g
-
-        ang = support_res * i
-        g, outer = add_point(g, _polar(ang, radius), (n_support,), fixed=True)
-        tmp = _polar(ang, vert_rad)
-        g, vert_top = add_point(g, tmp, (n_support,))
-        g, vert_bot = g.add_point(
-            jnp.array([tmp[0], tmp[1], 0.0]), (n_support,), fixed=True
-        )
-
-        g, vert_top2 = add_point(
-            g, _polar(ang + support_res / 2, vert_rad2), (n_support,)
-        )
-        g = g.add_connection(vert_top, outer, (n_support,))
-        g = g.add_connection(vert_top, vert_bot, (n_support,))
-        g = g.add_connection(vert_top, vert_top2, (n_support,))
-
-        vert_top2_ = batched.create_unbatch(vert_top2, (n_support,))
-        batched.concat([vert_top2_[1:], vert_top2_[:1]])
-        vert_top2_shifted = tree_do_batch(
-            batched.concat([vert_top2_[-1:], vert_top2_[:-1]]), dims=(n_support,)
-        ).unwrap()
-        g = g.add_connection(vert_top, vert_top2_shifted, (n_support,))
-
-        return batched.create(vert_top2)
-
-    vert_top2 = jax.vmap(inner)(jnp.arange(n_support))
-
-    def draw_circle(c: Array, r: Array):
-        res = 300
-
-        def for_ang(ang: Array):
-            nonlocal g
-            g, ans = add_point(g, c + _polar(ang, r), (res,))
-            return batched.create(ans)
-
-        pts = jax.vmap(for_ang)(jnp.arange(res) / res * 2 * math.pi)
-        jax.vmap(batched_connect((res,)))(pts, batched.concat([pts[1:], pts[:1]]))
-
-    r1 = 7.5 * areg.meters
-    r2 = 25.0 * areg.meters
-    r_arc = 15.0 * areg.meters
-
-    # draw_circle(jnp.array([0.0, 0.0]) * areg.m, r1)
-    # draw_circle(jnp.array([0.0, 0.0]) * areg.m, r2)
-    # draw_circle(jnp.array([0.0, 0.0]) * areg.m, radius)
-
-    def _arc_centers(p1: Array, p2: Array):
-        m = (p1 + p2) / 2
-        vc = p2 - p1
-        dist = jnp.sqrt(r_arc**2 - jnp.sum((vc / 2) ** 2))
-        vc_x, vc_y = vc / jnp.linalg.norm(vc) * dist
-        v = jnp.array([vc_y, -vc_x])
-        return m + v
-
-    # n_arcs = 36
-    n_arcs = 108
-    arc_skip = n_arcs // 12
-    n_rings = arc_skip * 2 + 1
-
-    ang_res = math.pi * 2 / n_arcs
-
-    def inner2(i: Array):
-        a1 = ang_res * i
-        a2 = a1 - ang_res * arc_skip
-        a3 = a1 + ang_res * arc_skip
-
-        p1 = _polar(a1, r1)
-        p2 = _polar(a2, r2)
-        p3 = _polar(a3, r2)
-
-        c1 = _arc_centers(p3, p1)
-        c2 = _arc_centers(p1, p2)
-        return batched.create(c1), batched.create(c2)
-
-    c1s, c2s = jax.vmap(inner2)(jnp.arange(n_arcs))
-
-    # for i in range(10):
-    #     draw_circle(c1s[i].unwrap(), r_arc)
-    # draw_circle(c1s[1].unwrap(), r_arc)
-    # draw_circle(c2s[0].unwrap(), r_arc)
-    # draw_circle(c2s[1].unwrap(), r_arc)
-    # draw_circle(c2s[arc_skip * 2].unwrap(), r_arc)
-
-    # draw_circle(c2s[1].unwrap(), r_arc)
-
-    # print(c1s[0].unwrap())
-    # print(c2s[0].unwrap())
-    # cs1
-    # tmp = circle_intersection(
-    #     c1s[0].unwrap(),
-    #     c2s[0].unwrap(),
-    #     r_arc,
-    #     r_arc,
-    # )
-    # print("tmp", tmp)
-
-    c2s_dup = batched.concat([c2s, c2s])
-
-    def one_arc(idx: Array):
-        intersect_with = c2s_dup.dynamic_slice((idx,), (n_rings,))
-
-        def one_intersection(c2: batched[Array]):
-            nonlocal g
-            it, _ = circle_intersection(
-                c1s[idx].unwrap(),
-                c2.unwrap(),
-                r_arc,
-                r_arc,
-            )
-            g, itp = add_point(g, it, (n_arcs, n_rings))
-            return batched.create(itp)
-
-        ips = jax.vmap(one_intersection)(intersect_with)
-        jax.vmap(batched_connect((n_arcs, n_rings - 1)))(ips[:-1], ips[1:])
-        return ips
-
-    net = jax.vmap(one_arc)(jnp.arange(n_arcs))
-    assert net.batch_dims() == (n_arcs, n_rings)
-
-    def reverse_arc(idx: Array):
-
-        def inner(idx2: Array):
-            idxw = idx - idx2
-            idxw = lax.select(idxw >= 0, on_true=idxw, on_false=idxw + n_arcs)
-            ans = net[idxw][idx2]
-            assert ans.batch_dims() == ()
-            return ans
-
-        rev_arc = jax.vmap(inner)(jnp.arange(n_rings))
-
-        jax.vmap(batched_connect((n_arcs, n_rings - 1)))(rev_arc[:-1], rev_arc[1:])
-
-    jax.vmap(reverse_arc)(jnp.arange(n_arcs))
-
-    def base_conections(idx: Array):
-        vt = vert_top2[idx]
-
-        def connect_one(idx2: Array):
-            idx_ = idx * 3 - arc_skip + idx2
-            idx_ = lax.select(idx_ >= 0, idx_, idx_ + n_arcs)
-            idx_ = lax.select(idx_ < n_arcs, idx_, idx_ - n_arcs)
-
-            batched_connect((n_support, 4))(vert_top2[idx], net[idx_, -1])
-
-        jax.vmap(connect_one)(jnp.array([0, 1, 2, 3]))
-
-    jax.vmap(base_conections)(jnp.arange(n_support))
-
-    def connect_ring(l: int):
-        layer = net[:, l]
-        jax.vmap(batched_connect((n_arcs,)))(
-            layer, batched.concat([layer[1:], layer[:1]])
-        )
-
-    connect_ring(-1)
-    connect_ring(0)
-    # n_rings
-    # print("i1s", ips)
-
-    # print("i1", i1)
-    # print("i2", i2)
-
-    # g, i1p = add_point(g, i1)
-    # g, i2p = add_point(g, i2)
-    # g = g.add_connection(i1p, i2p)
-
-    # p1 =
-
-    # tmp = jnp.array([0.0, 60.0]) * areg.m
-
-    return g
-
-
-# @jit
-@unitify
-def solve_forces():
+def solve_forces_final():
     g = build_graph()
 
     connnection_forces = g._connections.map(lambda _: jnp.array(0.0) * areg.pound)
@@ -329,58 +93,17 @@ def solve_forces():
             g._points,
             aggr,
         )
-        return aggr_filtered.unflatten()
+        return aggr_filtered
 
-    return flstsq(get_eqs, connnection_forces)
-
-
-def runner():
-    ans = jax.jit(solve_forces)()
-    # ans = jax.jit(solve_forces).lower().compile()
-    # print(ans.cost_analysis())
-    # print()
-    # print(ans.as_text())
-
-    print(ans.residuals)
-    print(ans.rank)
-    print(ans.x)
-
-    return ans
+    return g, flstsq(get_eqs, connnection_forces)
 
 
 @unitify
-def main():
-
-    g = build_graph()
-    print("build_graph: done")
-
-    connnection_forces = g._connections.map(lambda _: jnp.array(0.0) * areg.pound)
-
-    def get_eqs(connnection_forces=connnection_forces):
-        aggr = g.sum_annotations(
-            g._points.map(lambda _: jnp.zeros(3) * areg.pound),
-            g.forces_aggregate(connnection_forces, density=1.0 * areg.pound / areg.m),
-        )
-        aggr_filtered = batched_vmap(
-            lambda p, f: lax.select(p.fixed, on_true=jnp.zeros_like(f), on_false=f),
-            g._points,
-            aggr,
-        )
-        return aggr_filtered.unflatten()
-
-    ans = jit(lambda: flstsq(get_eqs, connnection_forces))()
-    # print(ans)
-    print(ans.residuals)
-    print(ans.rank)
-    print(ans.x)
-
-    # jax.vmap(
-
-    # print(g)
-
-    p0s, p1s = g.get_lines(mul=1 / areg.m)
-    p0s_: list[list[float]] = np.array(p0s).tolist()  # type: ignore
-    p1s_: list[list[float]] = np.array(p1s).tolist()  # type: ignore
+def do_plot(res_):
+    res = cast_unchecked.from_fn(solve_forces_final)(res_)
+    g, ans = res
+    forces = ans.x
+    forces_errors = ans.errors
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
@@ -395,20 +118,59 @@ def main():
     ax.set_ylim(-10, 20)
     ax.set_zlim(-10, 20)
 
-    line_collection = Line3DCollection(list(zip(p0s_, p1s_)))
+    f_max = jnp.max(jnp.abs(forces.unflatten()))
+    print("f_max", f_max)
+    f_max = 500 * areg.pound
+
+    def _color(x: fval, end: Array):
+        x = lax.min(x / f_max * 10, 1.0)
+        return x * end + (1 - x) * jnp.array([1.0, 1.0, 1.0]) * 0.5
+
+    colors = forces.map(
+        lambda x: lax.select(
+            x > 0,
+            on_true=_color(x, jnp.array([0.0, 0.0, 1.0])),
+            on_false=_color(-x, jnp.array([1.0, 0.0, 0.0])),
+        )
+    )
+    linewidths = forces.map(lambda x: (jnp.abs(x) / f_max * 10 + 0.2))
+
+    line_collection = Line3DCollection(
+        (g.get_lines() / areg.m).tolist(),
+        colors=colors.unflatten().tolist(),
+        linewidths=linewidths.unflatten().tolist(),
+    )
     ax.add_collection3d(line_collection)
     # ax.plot(xs, ys, zs)
 
-    fixed_points, ct = g._points.filter(lambda x: x.fixed)
-    fixed_points = fixed_points[: int(ct)].map(lambda x: x.coords).unflatten() / areg.m
-
-    ax.scatter(
-        fixed_points[:, 0].tolist(),
-        fixed_points[:, 1].tolist(),
-        fixed_points[:, 2].tolist(),  # type: ignore
-        c="r",
-        marker="o",
+    # fixed_points, ct = g._points.filter(lambda x: x.fixed)
+    plot_errors = batched_zip(g._points, forces_errors)
+    plot_errors, ct = plot_errors.filter_arr(
+        plot_errors.tuple_map(lambda p, e: jnp.linalg.norm(e) > 0.5 * areg.pound)
     )
+
+    def _plot_errors(x: point, e: Array):
+        cd = x.coords / areg.m
+        v = e / areg.pound
+        return jnp.stack([cd, cd + v])
+
+    print("count:", ct)
+    plot_error_lines = plot_errors[: int(ct)].tuple_map(_plot_errors).unflatten()
+    line_collection = Line3DCollection(
+        plot_error_lines.tolist(),
+        colors=(0.0, 1.0, 0.0),
+        linewidths=1.0,
+    )
+    ax.add_collection3d(line_collection)
+
+    # ax.scatter(
+    #     plot_points_coords[:, 0].tolist(),
+    #     plot_points_coords[:, 1].tolist(),
+    #     plot_points_coords[:, 2].tolist(),  # type: ignore
+    #     c="r",
+    #     marker="o",
+    #     s=plot_points_s.tolist(),
+    # )
 
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
@@ -416,3 +178,27 @@ def main():
 
     plt.show()
     # print(ys)
+
+
+@unitify
+def do_plot_simple():
+    g = build_graph()
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    assert isinstance(ax, Axes3D)
+
+    ax.set_xlim(-20, 10)
+    ax.set_ylim(-10, 20)
+    ax.set_zlim(-10, 20)
+
+    line_collection = Line3DCollection(
+        (g.get_lines() / areg.m).tolist(),
+    )
+    ax.add_collection3d(line_collection)
+
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+
+    plt.show()

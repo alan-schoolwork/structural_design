@@ -61,6 +61,10 @@ class cast_unchecked[T]:
     def __init__(self, _: T | _empty_t = _empty) -> None:
         pass
 
+    @staticmethod
+    def from_fn[R](f: Callable[..., R]) -> cast_unchecked[R]:
+        return cast_unchecked()
+
     def __call__(self, a) -> T:
         return a
 
@@ -77,9 +81,21 @@ def unique[T](x: Iterable[T]) -> T:
         return first
 
 
-def _wrap_jit[F: Callable, **P](
+class _jit_wrapped[**P, R]:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R: ...
+    def trace(self, *args: P.args, **kwargs: P.kwargs) -> jax.stages.Traced: ...
+    def lower(self, *args: P.args, **kwargs: P.kwargs) -> jax.stages.Lowered: ...
+
+
+class _jit_fn[**JitP]:
+    def __call__[**P, R](
+        self, f: Callable[P, R], /, *args: JitP.args, **kwargs: JitP.kwargs
+    ) -> _jit_wrapped[P, R]: ...
+
+
+def _wrap_jit[**P](
     jit_fn: Callable[Concatenate[Callable, P], Any],
-) -> Callable[Concatenate[F, P], F]:
+) -> _jit_fn[P]:
     return jit_fn  # type: ignore
 
 
@@ -132,3 +148,7 @@ def dict_set[K, V](d: dict[K, V], k: K) -> Callable[[V], V]:
 
 def shape_of(x: ArrayLike) -> tuple[int, ...]:
     return core.get_aval(x).shape  # type: ignore
+
+
+def return_of_fake[R](f: Callable[..., R]) -> R:
+    return None  # type: ignore
