@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Final, Literal, Sequence
+from typing import Any, Callable, Sequence
 
 import equinox as eqx
 import jax
 import jax.tree_util as jtu
 import numpy as np
-from jax import Array, core, lax
+from jax import Array, core
 from jax import numpy as jnp
 from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src.traceback_util import api_boundary
 from jax._src.typing import ArrayLike
-from pint import Unit, UnitRegistry
 
 from lib.utils import cast
 

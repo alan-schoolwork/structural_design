@@ -115,10 +115,13 @@ def build_graph() -> graph_t:
         unbatch_dims: tuple[int, ...] = (),
         *,
         fixed: blike = False,
+        accepts_force: blike = False,
     ):
         h = _project_get_h(p)
         coord = jnp.array([p[0], p[1], h])
-        return g.add_point(coord, unbatch_dims, fixed=fixed)
+        return g.add_point(
+            coord, unbatch_dims, fixed=fixed, accepts_force=accepts_force
+        )
 
     def batched_connect(unbatch_dims: tuple[int, ...]):
         def wrapped(a: batched[pointid], b: batched[pointid]):
@@ -139,12 +142,17 @@ def build_graph() -> graph_t:
         nonlocal g
 
         ang = support_res * i
-        g, outer = add_point(g, _polar(ang, radius), (n_support,), fixed=True)
+        g, outer = add_point(
+            g, _polar(ang, radius), (n_support,), fixed=True, accepts_force=True
+        )
 
         tmp = _polar(ang, vert_rad)
         g, vert_top = add_point(g, tmp, (n_support,))
         g, vert_top_proj = g.add_point(
-            jnp.array([tmp[0], tmp[1], 0.0]), (n_support,), fixed=True
+            jnp.array([tmp[0], tmp[1], 0.0]),
+            (n_support,),
+            fixed=True,
+            accepts_force=True,
         )
         g = g.add_connection(vert_top, vert_top_proj, (n_support,))
 
@@ -298,7 +306,7 @@ def build_graph() -> graph_t:
     def _make_inner_ring(i: Array):
         nonlocal g
         a = ang_res * i
-        g, inner_ring = add_point(g, _polar(a, r0), (n_arcs,))
+        g, inner_ring = add_point(g, _polar(a, r0), (n_arcs,), fixed=True)
         # g = g.add_connection(inner_ring, center_top, (n_arcs,))
 
         return batched.create(inner_ring)

@@ -1,52 +1,31 @@
-import math
-from dataclasses import dataclass
-from functools import partial
-from pathlib import Path
-from typing import Callable
-
-import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
 import matplotlib.pyplot as plt
 import numpy as np
-import oryx
-import sympy as s
-import sympy2jax
+import optax
 from jax import Array, lax
 from jax import tree_util as jtu
-from jax._src.typing import ArrayLike
-from jax.experimental.checkify import check, checkify
+from jax.experimental import sparse
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from pintax import Unit, areg, convert_unit, quantity, sync_units, unitify, ureg
-from pintax._utils import pretty_print
-from pintax.functions import lstsq
+from pintax import areg, convert_unit, dimensionless, magnitude, unitify
 
 from lib.batched import (
     batched,
     batched_vmap,
     batched_zip,
-    do_batch,
-    tree_do_batch,
-    unbatch,
 )
-from lib.beam import force_profile, force_profile_builder
 from lib.checkify import checkify_simple
-from lib.graph import graph_t, point, pointid
-from lib.jax_utils import debug_print, flatten_handler
-from lib.lstsq import flstsq, flstsq_checked
-from lib.plot import plot_unit
+from lib.graph import graph_t, point
+from lib.jax_utils import debug_print
+from lib.lstsq import flstsq, flstsq_r
 from lib.utils import (
-    blike,
-    bval,
+    cast,
     cast_unchecked,
-    debug_callback,
     fval,
-    ival,
     jit,
-    return_of_fake,
-    unique,
+    tree_at_2_,
+    value_and_grad_aux_,
 )
 from midterm.build_graph import build_graph
 
@@ -58,49 +37,87 @@ from midterm.build_graph import build_graph
 np.set_printoptions(precision=3, suppress=True)
 
 
+@jit
 def solve_forces(g: graph_t):
     connnection_forces = g._connections.map(lambda _: jnp.array(0.0) * areg.pound)
 
     def get_eqs(connnection_forces=connnection_forces):
         aggr = g.sum_annotations(
-            g._points.map(lambda _: jnp.zeros(3) * areg.pound),
+            g._points.map(lambda _: jnp.zeros((3,))),
             g.forces_aggregate(connnection_forces, density=1.0 * areg.pound / areg.m),
         )
         aggr_filtered = batched_vmap(
-            lambda p, f: lax.select(p.fixed, on_true=jnp.zeros_like(f), on_false=f),
+            lambda p, f: lax.select(
+                p.accepts_force, on_true=jnp.zeros_like(f), on_false=f
+            ),
             g._points,
             aggr,
         )
         return aggr_filtered
 
-    pass
+    return flstsq(get_eqs, connnection_forces)
 
 
-@unitify
+state_t = tuple[
+    tuple[Array, ...], optax.OptState, flstsq_r[batched[Array], batched[Array]]
+]
+
+
 @jit
+@checkify_simple
+@unitify
 def solve_forces_final():
     g = build_graph()
+    # print("done building graph")
+    # return g, solve_forces(g)
 
-    connnection_forces = g._connections.map(lambda _: jnp.array(0.0) * areg.pound)
+    def get_optim_buffers(g: graph_t) -> tuple[Array, ...]:
+        return (g._points.unflatten().coords,)
 
-    def get_eqs(connnection_forces=connnection_forces):
-        aggr = g.sum_annotations(
-            g._points.map(lambda _: jnp.zeros(3) * areg.pound),
-            g.forces_aggregate(connnection_forces, density=1.0 * areg.pound / areg.m),
+    init_bufs = get_optim_buffers(g)
+
+    optimizer = optax.adam(0.0005)
+    init_opt_state = optimizer.init(init_bufs)
+
+    def compute_loss(buffers: tuple[Array, ...]):
+        cur_g = tree_at_2_(get_optim_buffers, g, buffers)
+        cur_g = cur_g.maybe_pin_points()
+        ans = solve_forces(cur_g)
+        # print("residuals", ans.residuals)
+        loss = ans.residuals * areg.meter / areg.pound**2
+        return loss, ans
+
+    def optim_loop(state: state_t, _) -> tuple[state_t, None]:
+        debug_print("optim_loop: starting")
+        buffers, opt_state, _ = state
+        (loss, ans), grads = value_and_grad_aux_(compute_loss)(buffers)
+        debug_print("info:", loss, jnp.max(grads[0]), jnp.min(grads[0]))
+        updates, opt_state = optimizer.update(
+            tuple(convert_unit(x, dimensionless) for x in grads), opt_state
         )
-        aggr_filtered = batched_vmap(
-            lambda p, f: lax.select(p.fixed, on_true=jnp.zeros_like(f), on_false=f),
-            g._points,
-            aggr,
+        buffers = optax.apply_updates(
+            tuple(magnitude(x, areg.m) for x in buffers), updates
         )
-        return aggr_filtered
+        buffers = tuple(x * areg.m for x in cast_unchecked()(buffers))
+        return (buffers, opt_state, ans), None
 
-    return g, flstsq(get_eqs, connnection_forces)
+    @jit
+    def get_ans_as_zero():
+        _, ans = compute_loss(init_bufs)
+        return jtu.tree_map(lambda x: jnp.zeros_like(x), ans)
+
+    (buffers, opt_state, ans), _ = lax.scan(
+        optim_loop,
+        init=(init_bufs, init_opt_state, get_ans_as_zero()),
+        length=10,
+    )
+    return tree_at_2_(get_optim_buffers, g, buffers), ans
 
 
 @unitify
 def do_plot(res_):
     res = cast_unchecked.from_fn(solve_forces_final)(res_)
+    # assert False
     g, ans = res
     forces = ans.x
     forces_errors = ans.errors
@@ -146,7 +163,7 @@ def do_plot(res_):
     # fixed_points, ct = g._points.filter(lambda x: x.fixed)
     plot_errors = batched_zip(g._points, forces_errors)
     plot_errors, ct = plot_errors.filter_arr(
-        plot_errors.tuple_map(lambda p, e: jnp.linalg.norm(e) > 0.5 * areg.pound)
+        plot_errors.tuple_map(lambda p, e: jnp.linalg.norm(e) > 0.1 * areg.pound)
     )
 
     def _plot_errors(x: point, e: Array):

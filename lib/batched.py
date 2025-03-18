@@ -1,26 +1,20 @@
 from __future__ import annotations
 
-import itertools
 import math
-from dataclasses import dataclass
 from typing import Any, Callable, Concatenate, Sequence, overload
 
 import equinox as eqx
 import jax
-import sympy as s
 from jax import Array, ShapeDtypeStruct, lax
 from jax import numpy as jnp
 from jax import tree_util as jtu
-from jax._src import ad_util, core, traceback_util
+from jax._src import core
 from jax._src.interpreters import batching
 from jax.typing import ArrayLike
-from jax.util import safe_map as map
 from jax.util import safe_zip as zip
-from pintax import areg, convert_unit
 from pintax._utils import pp_obj, pretty_print
-from pintax.unstable import unitify_rules
 
-from .utils import blike, cast_unchecked, dict_set, ival, shape_of, tree_at_
+from .utils import blike, dict_set, ival, shape_of, tree_at_
 
 
 def _remove_prefix(v: tuple[int, ...], prefix: tuple[int, ...]) -> tuple[int, ...]:

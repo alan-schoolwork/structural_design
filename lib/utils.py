@@ -1,35 +1,24 @@
 from __future__ import annotations
 
-import itertools
-import math
-from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import (
-    Annotated,
     Any,
     Callable,
     Concatenate,
     Iterable,
-    Never,
     Protocol,
-    TypeVar,
-    Unpack,
     final,
 )
 
 import equinox as eqx
 import jax
-import sympy as s
-from beartype import beartype as typechecker
 from jax import Array
 from jax import numpy as jnp
-from jax import tree_util as jtu
-from jax._src import ad_util, core, traceback_util
+from jax._src import core
 from jax._src.typing import ArrayLike
-from jax.interpreters.ad import JVPTrace, JVPTracer
-from jaxtyping import Array, Bool, Float, Int, PyTree, jaxtyped
-from sympy import Number
-from sympy.core.basic import Printable
+from jax.experimental.checkify import check
+from jaxtyping import Array, Bool, Float, Int
 
 proj = Path(__file__).parent.parent
 
@@ -126,6 +115,14 @@ def tree_at_[T, N](
     return eqx.tree_at(where=where, pytree=pytree, **kwargs)
 
 
+def tree_at_2_[T, *Ns](
+    where: Callable[[T], tuple[*Ns]],
+    pytree: T,
+    replace: tuple[*Ns] | None = None,
+) -> T:
+    return eqx.tree_at(where=where, pytree=pytree, replace=replace)
+
+
 class custom_vmap_res[*P, R](Protocol):
     def __call__(self, *args: *P) -> R: ...
 
@@ -152,3 +149,24 @@ def shape_of(x: ArrayLike) -> tuple[int, ...]:
 
 def return_of_fake[R](f: Callable[..., R]) -> R:
     return None  # type: ignore
+
+
+def check_nan(x: ArrayLike):
+    check(~jnp.any(jnp.isnan(x)), "got nan")
+
+
+class _v_and_g[**Opts](Protocol):
+    def __call__[T, R, A](
+        self, f: Callable[[T], tuple[R, A]], /, *args: Opts.args, **kwargs: Opts.kwargs
+    ) -> Callable[[T], tuple[tuple[R, A], T]]: ...
+
+
+def _wrap_value_and_grad_aux[**P](
+    f: Callable[Concatenate[Callable, P], Any],
+) -> _v_and_g[P]:
+    return partial(cast_unchecked()(f), has_aux=True)
+
+
+value_and_grad_aux_ = _wrap_value_and_grad_aux(jax.value_and_grad)
+
+# jit = _wrap_jit(jax.jit)

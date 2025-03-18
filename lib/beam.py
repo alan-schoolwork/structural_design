@@ -1,18 +1,12 @@
-from dataclasses import dataclass
-from typing import Callable, TypeVar
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
 from beartype import beartype as typechecker
 from jax import lax
-from jax import tree_util as jtu
-from jax.experimental.checkify import check, checkify
-from jaxtyping import Array, Bool, Float, Int, PyTree, jaxtyped
-from pintax.functions import lstsq
+from jax.experimental.checkify import check
+from jaxtyping import Array, Float, jaxtyped
 
-from .utils import bval, fval, ival
+from .utils import fval, ival
 
 
 @jaxtyped(typechecker=typechecker)

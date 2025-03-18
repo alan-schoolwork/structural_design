@@ -20,8 +20,6 @@ class flstsq_r[T, R](eqx.Module):
     x: T
     errors: R
     residuals: Array
-    rank: Array
-    svals: Array
 
     # other outputs here if needed
 
@@ -88,7 +86,10 @@ def flstsq[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
     # Now mat has shape [output_dim, input_dim], and const_flat has shape [output_dim].
 
     # Solve the linear system mat @ δx ≈ −const (a least-squares problem).
-    delta_args_flat, residuals, rank, svals = lstsq(mat, -const_flat, rcond=None)
+    # delta_args_flat, _, _, _ = lstsq(mat, -const_flat, rcond=None)
+    delta_args_flat = lstsq_safe(mat, -const_flat)
+    # assert False
+
     errors_flat = mat @ delta_args_flat + const_flat
 
     # Construct the new input by adding δx to the original arg_bufs.
@@ -107,9 +108,7 @@ def flstsq[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
         const=const_unflat,
         x=new_x,
         errors=split_out(errors_flat),
-        residuals=residuals,
-        rank=rank,
-        svals=svals,
+        residuals=jnp.sum(errors_flat**2),
     )
 
 
@@ -117,3 +116,48 @@ def flstsq_checked[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
     ans = flstsq(f, arg_example)
     check(jnp.all(ans.residuals < 10 ** (-5)), "flstsq_checked")
     return ans
+
+
+@jax.custom_jvp
+def lstsq_safe(a_mat: Array, b_vect: Array) -> Array:
+    orig_pinv = jnp.linalg.pinv(a_mat, rtol=0.0001)
+    return orig_pinv @ b_vect
+    # ans, _, _, _ = lstsq(a_mat, b_vect)
+    # return ans
+
+
+@lstsq_safe.defjvp
+def _(primals: tuple[Array, Array], tangents: tuple[Array, Array]):
+
+    # https://github.com/jax-ml/jax/issues/10805
+    a_mat, b_vect = primals
+    assert len(a_mat.shape) == 2
+    assert len(b_vect.shape) == 1
+    assert a_mat.shape[0] == b_vect.shape[0]
+
+    orig_pinv = jnp.linalg.pinv(a_mat, rtol=0.0001)
+
+    primal_ans, _, _, _ = lstsq(a_mat, b_vect)
+    primal_ans = orig_pinv @ b_vect
+
+    deriv_of_a, deriv_of_b = tangents
+    true_deriv_shift_b = orig_pinv @ deriv_of_b
+
+    shift_a_deriv_pinv = (
+        -orig_pinv @ deriv_of_a @ orig_pinv
+        + (
+            orig_pinv
+            @ orig_pinv.T
+            @ deriv_of_a.T
+            @ (jnp.eye(b_vect.size) - a_mat @ orig_pinv)
+        )
+        + (
+            (jnp.eye(a_mat.shape[1]) - orig_pinv @ a_mat)
+            @ deriv_of_a.T
+            @ orig_pinv.T
+            @ orig_pinv
+        )
+    )
+    true_deriv_shift_a = shift_a_deriv_pinv @ b_vect
+
+    return primal_ans, true_deriv_shift_a + true_deriv_shift_b

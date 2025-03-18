@@ -1,39 +1,36 @@
 from __future__ import annotations
 
-import itertools
 import math
-from dataclasses import dataclass
 from typing import Callable
 
 import equinox as eqx
 import jax
-import sympy as s
 from jax import Array, lax
 from jax import numpy as jnp
-from jax import tree_util as jtu
-from jax.typing import ArrayLike
-from pintax import areg, convert_unit
 from pintax._utils import pp_obj, pretty_print
 
 from lib.batched import (
     batched,
-    batched_treemap,
-    batched_vmap,
-    do_batch,
     tree_do_batch,
-    unbatch,
 )
 
-from .utils import blike, bval, cast_unchecked, custom_vmap_, fval, ival, tree_at_
+from .utils import blike, fval, tree_at_
 
 
 class point(eqx.Module):
     coords: Array
 
     fixed: blike
+    accepts_force: blike
 
     def __repr__(self):
         return pp_obj("point", pretty_print(self.coords)).format()
+
+    def maybe_pin(self) -> point:
+        ans = lax.select(
+            self.fixed, on_true=lax.stop_gradient(self.coords), on_false=self.coords
+        )
+        return tree_at_(lambda p: p.coords, self, ans)
 
 
 class pointid(eqx.Module):
@@ -72,7 +69,7 @@ class graph_t(eqx.Module):
     def create() -> graph_t:
         _id = pointid(jnp.array(0))
         return graph_t(
-            _points=batched.create(point(jnp.zeros(3), jnp.array(False))).repeat(0),
+            _points=batched.create(point(jnp.zeros(3), False, False)).repeat(0),
             _connections=batched.create(connection(_id, _id)).repeat(0),
             _external_forces=batched.create(force_annotation(_id, jnp.zeros(3))).repeat(
                 0
@@ -88,8 +85,11 @@ class graph_t(eqx.Module):
         unbatch_dims: tuple[int, ...] = (),
         *,
         fixed: blike = False,
+        accepts_force: blike = False,
     ) -> tuple[graph_t, pointid]:
-        return self._add_point(point(c, fixed), unbatch_dims)
+        return self._add_point(
+            point(c, fixed=fixed, accepts_force=accepts_force), unbatch_dims
+        )
 
     def _add_point(
         self, x: point, unbatch_dims: tuple[int, ...] = ()
@@ -189,3 +189,8 @@ class graph_t(eqx.Module):
 
         ans = jax.vmap(inner)(self._connections, connection_forces)
         return ans.reshape(-1)
+
+    def maybe_pin_points(self):
+        return tree_at_(
+            lambda me: me._points, self, self._points.map(lambda x: x.maybe_pin())
+        )
