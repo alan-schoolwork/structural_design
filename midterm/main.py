@@ -8,7 +8,7 @@ from jax import tree_util as jtu
 from jax.experimental import sparse
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from pintax import areg, convert_unit, dimensionless, magnitude, unitify
+from pintax import areg, convert_unit, dimensionless, magnitude, quantity, unitify
 
 from lib.batched import (
     batched,
@@ -63,11 +63,12 @@ state_t = tuple[
 ]
 
 
+# @checkify_simple
 @unitify
-@checkify_simple
 def solve_forces_final():
     g = build_graph()
-    # print("done building graph")
+    print("done building graph")
+
     return g, solve_forces(g)
 
     def get_optim_buffers(g: graph_t) -> tuple[Array, ...]:
@@ -75,16 +76,24 @@ def solve_forces_final():
 
     init_bufs = get_optim_buffers(g)
 
-    optimizer = optax.adam(0.0005)
-    init_opt_state = optimizer.init(init_bufs)
-
     def compute_loss(buffers: tuple[Array, ...]):
         cur_g = tree_at_2_(get_optim_buffers, g, buffers)
         cur_g = cur_g.maybe_pin_points()
         ans = solve_forces(cur_g)
-        # print("residuals", ans.residuals)
-        loss = ans.residuals * areg.meter / areg.pound**2
+
+        softplus = lambda x: jax.nn.softplus(quantity(x).m) * quantity(x).u
+        fs_abs = ans.x.map(lambda f: softplus(f) + softplus(-f))
+
+        loss = jnp.sum(fs_abs.unflatten())
+        loss = loss * areg.meter / areg.pound
         return loss, ans
+
+    # (loss, ans), grads = jit(lambda: value_and_grad_aux_(compute_loss)(init_bufs))()
+    # print("info:", loss, jnp.max(grads[0]), jnp.min(grads[0]))
+    # return g, ans
+
+    optimizer = optax.adam(learning_rate=10 ** (-4))
+    init_opt_state = optimizer.init(init_bufs)
 
     def optim_loop(state: state_t, _) -> tuple[state_t, None]:
         debug_print("optim_loop: starting")
@@ -105,11 +114,13 @@ def solve_forces_final():
         _, ans = compute_loss(init_bufs)
         return jtu.tree_map(lambda x: jnp.zeros_like(x), ans)
 
-    (buffers, opt_state, ans), _ = lax.scan(
-        optim_loop,
-        init=(init_bufs, init_opt_state, get_ans_as_zero()),
-        length=10,
-    )
+    (buffers, opt_state, ans), _ = jit(
+        lambda: lax.scan(
+            optim_loop,
+            init=(init_bufs, init_opt_state, get_ans_as_zero()),
+            length=10,
+        )
+    )()
     return tree_at_2_(get_optim_buffers, g, buffers), ans
 
 
@@ -119,32 +130,32 @@ def do_plot(res_):
 
     fig = plt.figure(figsize=(18, 8))
     # plt.subplots_adjust(hspace=0.1, wspace=0.1)
-    fig.suptitle("spherical all layers braced", fontsize=32)
+    fig.suptitle("funicular shape", fontsize=32)
 
-    ax = fig.add_subplot(131, projection="3d")
+    ax = fig.add_subplot(131, projection="3d", computed_zorder=False)
     assert isinstance(ax, Axes3D)
     ax.set_xlim(-20, 10)
     ax.set_ylim(-10, 20)
     ax.set_zlim(-10, 20)
     do_plot_one(ax, res_)
 
-    ax = fig.add_subplot(132, projection="3d")
+    ax = fig.add_subplot(132, projection="3d", computed_zorder=False)
     assert isinstance(ax, Axes3D)
     ax.set_xlim(-5, 5)
     ax.set_ylim(5, 15)
     ax.set_zlim(0, 10)
     do_plot_one(ax, res_)
 
-    ax = fig.add_subplot(133, projection="3d")
+    ax = fig.add_subplot(133, projection="3d", computed_zorder=False)
     assert isinstance(ax, Axes3D)
-    ax.set_xlim(-5, 10)
+    ax.set_xlim(8, 23)
     ax.set_ylim(5, 20)
-    ax.set_zlim(-25, -10)
+    ax.set_zlim(-17, -2)
     do_plot_one(ax, res_)
     # plt.show()
 
     plt.tight_layout()
-    plt.savefig("sphere_all_layers.png", dpi=300)
+    plt.savefig("funicular1.png", dpi=300)
     plt.close()
 
 
@@ -176,8 +187,8 @@ def do_plot_one_(ax, res_):
     colors = forces.map(
         lambda x: lax.select(
             x > 0,
-            on_true=_color(x, jnp.array([0.0, 0.0, 1.0])),
-            on_false=_color(-x, jnp.array([1.0, 0.0, 0.0])),
+            on_true=_color(x, jnp.array([1.0, 0.0, 0.0])),
+            on_false=_color(-x, jnp.array([0.0, 0.0, 1.0])),
         )
     )
     linewidths = forces.map(lambda x: (jnp.abs(x) / f_max * 10 + 0.2))
@@ -186,6 +197,7 @@ def do_plot_one_(ax, res_):
         (g.get_lines() / areg.m).tolist(),
         colors=colors.unflatten().tolist(),
         linewidths=linewidths.unflatten().tolist(),
+        zorder=1,
     )
     ax.add_collection3d(line_collection)
     # ax.plot(xs, ys, zs)
@@ -198,7 +210,7 @@ def do_plot_one_(ax, res_):
 
     def _plot_errors(x: point, e: Array):
         cd = x.coords / areg.m
-        v = e / areg.pound
+        v = e / areg.pound * 2
         return jnp.stack([cd, cd + v]), cd + v, jnp.maximum(jnp.linalg.norm(v), 0.2)
 
     print("count:", ct)
@@ -211,6 +223,7 @@ def do_plot_one_(ax, res_):
             plot_error_lines.tolist(),
             colors=(0.0, 1.0, 0.0),
             linewidths=(intensity * 3.0).tolist(),
+            zorder=5,
         )
         ax.add_collection3d(line_collection)
 
@@ -222,6 +235,7 @@ def do_plot_one_(ax, res_):
             marker="o",
             s=(intensity * 20.0).tolist(),  # type: ignore
             # s=plot_points_s.tolist(),
+            zorder=6,
         )
 
     ax.set_xlabel("X")
