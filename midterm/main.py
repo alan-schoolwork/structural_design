@@ -63,13 +63,12 @@ state_t = tuple[
 ]
 
 
-@jit
-@checkify_simple
 @unitify
+@checkify_simple
 def solve_forces_final():
     g = build_graph()
     # print("done building graph")
-    # return g, solve_forces(g)
+    return g, solve_forces(g)
 
     def get_optim_buffers(g: graph_t) -> tuple[Array, ...]:
         return (g._points.unflatten().coords,)
@@ -114,26 +113,57 @@ def solve_forces_final():
     return tree_at_2_(get_optim_buffers, g, buffers), ans
 
 
-@unitify
 def do_plot(res_):
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection="3d")
+
+    fig = plt.figure(figsize=(18, 8))
+    # plt.subplots_adjust(hspace=0.1, wspace=0.1)
+    fig.suptitle("funicular up to the center", fontsize=32)
+
+    ax = fig.add_subplot(131, projection="3d")
+    assert isinstance(ax, Axes3D)
+    ax.set_xlim(-20, 10)
+    ax.set_ylim(-10, 20)
+    ax.set_zlim(-10, 20)
+    do_plot_one(ax, res_)
+
+    ax = fig.add_subplot(132, projection="3d")
+    assert isinstance(ax, Axes3D)
+    ax.set_xlim(-5, 5)
+    ax.set_ylim(5, 15)
+    ax.set_zlim(0, 10)
+    do_plot_one(ax, res_)
+
+    ax = fig.add_subplot(133, projection="3d")
+    assert isinstance(ax, Axes3D)
+    ax.set_xlim(-5, 10)
+    ax.set_ylim(5, 20)
+    ax.set_zlim(-25, -10)
+    do_plot_one(ax, res_)
+    # plt.show()
+
+    plt.tight_layout()
+    plt.savefig("funicular_end_at_0.png", dpi=300)
+    plt.close()
+
+
+def do_plot_one(ax, res_):
+    return unitify(lambda res: do_plot_one_(ax, res))(res_)
+
+
+def do_plot_one_(ax, res_):
+    ax.set_axis_off()
     res = cast_unchecked.from_fn(solve_forces_final)(res_)
     # assert False
     g, ans = res
     forces = ans.x
     forces_errors = ans.errors
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    assert isinstance(ax, Axes3D)
-
     # lim = 30
     # ax.set_xlim(-lim, lim)
     # ax.set_ylim(-lim, lim)
     # ax.set_zlim(-lim, lim)
-
-    ax.set_xlim(-20, 10)
-    ax.set_ylim(-10, 20)
-    ax.set_zlim(-10, 20)
 
     f_max = jnp.max(jnp.abs(forces.unflatten()))
     print("f_max", f_max)
@@ -163,37 +193,40 @@ def do_plot(res_):
     # fixed_points, ct = g._points.filter(lambda x: x.fixed)
     plot_errors = batched_zip(g._points, forces_errors)
     plot_errors, ct = plot_errors.filter_arr(
-        plot_errors.tuple_map(lambda p, e: jnp.linalg.norm(e) > 0.1 * areg.pound)
+        plot_errors.tuple_map(lambda p, e: jnp.linalg.norm(e) > 0.2 * areg.pound)
     )
 
     def _plot_errors(x: point, e: Array):
         cd = x.coords / areg.m
         v = e / areg.pound
-        return jnp.stack([cd, cd + v])
+        return jnp.stack([cd, cd + v]), cd + v, jnp.maximum(jnp.linalg.norm(v), 0.2)
 
     print("count:", ct)
-    plot_error_lines = plot_errors[: int(ct)].tuple_map(_plot_errors).unflatten()
+    plot_error_lines, plot_error_points, intensity = (
+        plot_errors[: int(ct)].tuple_map(_plot_errors).unflatten()
+    )
     line_collection = Line3DCollection(
         plot_error_lines.tolist(),
         colors=(0.0, 1.0, 0.0),
-        linewidths=1.0,
+        linewidths=(intensity * 3.0).tolist(),
     )
     ax.add_collection3d(line_collection)
 
-    # ax.scatter(
-    #     plot_points_coords[:, 0].tolist(),
-    #     plot_points_coords[:, 1].tolist(),
-    #     plot_points_coords[:, 2].tolist(),  # type: ignore
-    #     c="r",
-    #     marker="o",
-    #     s=plot_points_s.tolist(),
-    # )
+    ax.scatter(
+        plot_error_points[:, 0].tolist(),
+        plot_error_points[:, 1].tolist(),
+        plot_error_points[:, 2].tolist(),  # type: ignore
+        color=(0.0, 0.0, 0.0),
+        marker="o",
+        s=(intensity * 20.0).tolist(),  # type: ignore
+        # s=plot_points_s.tolist(),
+    )
 
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
 
-    plt.show()
+    # plt.show()
     # print(ys)
 
 

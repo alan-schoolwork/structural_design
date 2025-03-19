@@ -102,7 +102,8 @@ def build_graph() -> graph_t:
         # return jnp.array(0.0)
         assert p.shape == (2,)
         # r_min = 2.0 * areg.meters
-        r_min = r0
+        # r_min = r0
+        r_min = 0.0
         rat = jnp.maximum((jnp.linalg.norm(p) - r_min) / (radius - r_min), 0.0)
         ans = (jnp.cosh(rat) - jnp.cosh(1)) / (jnp.cosh(0) - jnp.cosh(1))
         return ans * height
