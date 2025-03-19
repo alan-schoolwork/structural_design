@@ -254,12 +254,13 @@ def do_plot_simple():
     ax = fig.add_subplot(111, projection="3d")
     assert isinstance(ax, Axes3D)
 
-    ax.set_xlim(-20, 10)
-    ax.set_ylim(-10, 20)
-    ax.set_zlim(-10, 20)
+    ax.set_xlim(0, 30)
+    ax.set_ylim(-30, 0)
+    ax.set_zlim(0, 30)
 
     line_collection = Line3DCollection(
         (g.get_lines() / areg.m).tolist(),
+        linewidths=1.0,
     )
     ax.add_collection3d(line_collection)
 
@@ -267,4 +268,7 @@ def do_plot_simple():
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
 
-    plt.show()
+    # plt.show()
+    plt.tight_layout()
+    plt.savefig("structure.png", dpi=300)
+    plt.close()
