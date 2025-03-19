@@ -119,7 +119,7 @@ def do_plot(res_):
 
     fig = plt.figure(figsize=(18, 8))
     # plt.subplots_adjust(hspace=0.1, wspace=0.1)
-    fig.suptitle("all layers braced", fontsize=32)
+    fig.suptitle("spherical all layers braced", fontsize=32)
 
     ax = fig.add_subplot(131, projection="3d")
     assert isinstance(ax, Axes3D)
@@ -144,7 +144,7 @@ def do_plot(res_):
     # plt.show()
 
     plt.tight_layout()
-    plt.savefig("funicular_all_layers.png", dpi=300)
+    plt.savefig("sphere_all_layers.png", dpi=300)
     plt.close()
 
 
