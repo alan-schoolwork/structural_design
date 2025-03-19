@@ -119,7 +119,7 @@ def do_plot(res_):
 
     fig = plt.figure(figsize=(18, 8))
     # plt.subplots_adjust(hspace=0.1, wspace=0.1)
-    fig.suptitle("funicular up to top ring", fontsize=32)
+    fig.suptitle("all layers braced", fontsize=32)
 
     ax = fig.add_subplot(131, projection="3d")
     assert isinstance(ax, Axes3D)
@@ -144,7 +144,7 @@ def do_plot(res_):
     # plt.show()
 
     plt.tight_layout()
-    plt.savefig("funicular_end_at_2.5.png", dpi=300)
+    plt.savefig("funicular_all_layers.png", dpi=300)
     plt.close()
 
 
@@ -202,25 +202,27 @@ def do_plot_one_(ax, res_):
         return jnp.stack([cd, cd + v]), cd + v, jnp.maximum(jnp.linalg.norm(v), 0.2)
 
     print("count:", ct)
-    plot_error_lines, plot_error_points, intensity = (
-        plot_errors[: int(ct)].tuple_map(_plot_errors).unflatten()
-    )
-    line_collection = Line3DCollection(
-        plot_error_lines.tolist(),
-        colors=(0.0, 1.0, 0.0),
-        linewidths=(intensity * 3.0).tolist(),
-    )
-    ax.add_collection3d(line_collection)
+    ct = int(ct)
+    if ct > 0:
+        plot_error_lines, plot_error_points, intensity = (
+            plot_errors[:ct].tuple_map(_plot_errors).unflatten()
+        )
+        line_collection = Line3DCollection(
+            plot_error_lines.tolist(),
+            colors=(0.0, 1.0, 0.0),
+            linewidths=(intensity * 3.0).tolist(),
+        )
+        ax.add_collection3d(line_collection)
 
-    ax.scatter(
-        plot_error_points[:, 0].tolist(),
-        plot_error_points[:, 1].tolist(),
-        plot_error_points[:, 2].tolist(),  # type: ignore
-        color=(0.0, 0.0, 0.0),
-        marker="o",
-        s=(intensity * 20.0).tolist(),  # type: ignore
-        # s=plot_points_s.tolist(),
-    )
+        ax.scatter(
+            plot_error_points[:, 0].tolist(),
+            plot_error_points[:, 1].tolist(),
+            plot_error_points[:, 2].tolist(),  # type: ignore
+            color=(0.0, 0.0, 0.0),
+            marker="o",
+            s=(intensity * 20.0).tolist(),  # type: ignore
+            # s=plot_points_s.tolist(),
+        )
 
     ax.set_xlabel("X")
     ax.set_ylabel("Y")

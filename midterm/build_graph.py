@@ -131,9 +131,9 @@ def build_graph() -> graph_t:
 
         return wrapped
 
-    def connect_ring(pts: batched[pointid]):
+    def connect_ring(pts: batched[pointid], extra_unbatch: tuple[int, ...] = ()):
         (length,) = pts.batch_dims()
-        jax.vmap(batched_connect((length,)))(pts, pts.roll(1))
+        jax.vmap(batched_connect((*extra_unbatch, length)))(pts, pts.roll(1))
 
     g = graph_t.create()
 
@@ -298,11 +298,16 @@ def build_graph() -> graph_t:
     def connect_net_layer(l: int):
         return connect_ring(net[:, l])
 
-    connect_net_layer(-1)
-    connect_net_layer(-2)
-    connect_net_layer(-3)
-    connect_net_layer(0)
-    connect_net_layer(1)
+    def connect_net_layer_for_all(pts: batched[pointid]):
+        return connect_ring(pts, extra_unbatch=(n_rings,))
+
+    jax.vmap(connect_net_layer_for_all, in_axes=1)(net)
+
+    # connect_net_layer(-1)
+    # connect_net_layer(-2)
+    # connect_net_layer(-3)
+    # connect_net_layer(0)
+    # connect_net_layer(1)
 
     def _make_inner_ring(i: Array):
         nonlocal g
