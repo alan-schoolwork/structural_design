@@ -119,7 +119,7 @@ def do_plot(res_):
 
     fig = plt.figure(figsize=(18, 8))
     # plt.subplots_adjust(hspace=0.1, wspace=0.1)
-    fig.suptitle("funicular up to the center", fontsize=32)
+    fig.suptitle("funicular up to top ring", fontsize=32)
 
     ax = fig.add_subplot(131, projection="3d")
     assert isinstance(ax, Axes3D)
@@ -144,7 +144,7 @@ def do_plot(res_):
     # plt.show()
 
     plt.tight_layout()
-    plt.savefig("funicular_end_at_0.png", dpi=300)
+    plt.savefig("funicular_end_at_2.5.png", dpi=300)
     plt.close()
 
 
