@@ -130,32 +130,38 @@ def do_plot(res_):
 
     fig = plt.figure(figsize=(18, 8))
     # plt.subplots_adjust(hspace=0.1, wspace=0.1)
-    fig.suptitle("spherical shape, horizontal bracing", fontsize=32)
+    fig.suptitle(
+        "redesign (forces are scaled down 2x when drawn, compared to previous plots)",
+        fontsize=32,
+    )
 
-    ax = fig.add_subplot(131, projection="3d", computed_zorder=False)
+    computed_zorder = True
+    ax = fig.add_subplot(131, projection="3d", computed_zorder=computed_zorder)
     assert isinstance(ax, Axes3D)
     ax.set_xlim(-20, 10)
     ax.set_ylim(-10, 20)
     ax.set_zlim(-10, 20)
     do_plot_one(ax, res_)
 
-    ax = fig.add_subplot(132, projection="3d", computed_zorder=False)
+    ax = fig.add_subplot(132, projection="3d", computed_zorder=computed_zorder)
     assert isinstance(ax, Axes3D)
     ax.set_xlim(-5, 5)
     ax.set_ylim(5, 15)
     ax.set_zlim(0, 10)
     do_plot_one(ax, res_)
 
-    ax = fig.add_subplot(133, projection="3d", computed_zorder=False)
+    ax = fig.add_subplot(133, projection="3d", computed_zorder=computed_zorder)
     assert isinstance(ax, Axes3D)
-    ax.set_xlim(8, 23)
-    ax.set_ylim(5, 20)
-    ax.set_zlim(-17, -2)
+    ax.set_xlim(0, 20)
+    ax.set_ylim(0, 20)
+    ax.set_zlim(0, 20)
+    ax.view_init(elev=90, azim=0)
     do_plot_one(ax, res_)
-    # plt.show()
 
     plt.tight_layout()
-    plt.savefig("sphere2.png", dpi=300)
+
+    # plt.show()
+    plt.savefig("redesign.png", dpi=300)
     plt.close()
 
 
@@ -178,7 +184,7 @@ def do_plot_one_(ax, res_):
 
     f_max = jnp.max(jnp.abs(forces.unflatten()))
     print("f_max", f_max)
-    f_max = 500 * areg.pound
+    f_max = 1000 * areg.pound
 
     def _color(x: fval, end: Array):
         x = lax.min(x / f_max * 10, 1.0)
