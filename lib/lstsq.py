@@ -1,17 +1,14 @@
-from dataclasses import dataclass
-from typing import Callable, TypeVar
+from typing import Callable
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from beartype import beartype as typechecker
 from jax import tree_util as jtu
 from jax.experimental.checkify import check
-from jaxtyping import Array, Bool, Float, Int, PyTree, jaxtyped
+from jaxtyping import Array
 from pintax.functions import lstsq
 
-from .utils import bval, fval, ival
 
 
 class flstsq_r[T, R](eqx.Module):

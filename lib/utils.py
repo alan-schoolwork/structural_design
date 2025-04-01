@@ -180,7 +180,7 @@ def _allow_autoreload_get(x):
     return object.__getattribute__(x, "_func").obj
 
 
-class allow_autoreload(type):
+class _allow_autoreload(type):
 
     def __new__(cls, func):
         del func
@@ -198,3 +198,7 @@ class allow_autoreload(type):
     @property
     def __call__(self):
         return _allow_autoreload_get(self).__call__
+
+
+def allow_autoreload[T](x: T) -> T:
+    return cast_unchecked(x)(_allow_autoreload(x))

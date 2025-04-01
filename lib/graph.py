@@ -7,12 +7,14 @@ import equinox as eqx
 import jax
 from jax import Array, lax
 from jax import numpy as jnp
-from pintax._utils import pp_obj, pretty_print
 
 from lib.batched import (
     batched,
+    batched_treemap,
+    batched_zip,
     tree_do_batch,
 )
+from pintax._utils import pp_obj, pretty_print
 
 from .utils import blike, fval, tree_at_
 
@@ -54,6 +56,7 @@ class force_annotation(eqx.Module):
 
 
 class graph_t(eqx.Module):
+    dim: int = eqx.field(static=True)
     _points: batched[point]
     _connections: batched[connection]
     _external_forces: batched[force_annotation]
@@ -66,14 +69,15 @@ class graph_t(eqx.Module):
         ).format()
 
     @staticmethod
-    def create() -> graph_t:
+    def create(dim: int) -> graph_t:
         _id = pointid(jnp.array(0))
         return graph_t(
-            _points=batched.create(point(jnp.zeros(3), False, False)).repeat(0),
+            dim=dim,
+            _points=batched.create(point(jnp.zeros(dim), False, False)).repeat(0),
             _connections=batched.create(connection(_id, _id)).repeat(0),
-            _external_forces=batched.create(force_annotation(_id, jnp.zeros(3))).repeat(
-                0
-            ),
+            _external_forces=batched.create(
+                force_annotation(_id, jnp.zeros(dim))
+            ).repeat(0),
         )
 
     def __add__(self, mod: Callable[[graph_t], graph_t]) -> graph_t:
@@ -89,6 +93,17 @@ class graph_t(eqx.Module):
     ) -> tuple[graph_t, pointid]:
         return self._add_point(
             point(c, fixed=fixed, accepts_force=accepts_force), unbatch_dims
+        )
+
+    def add_point_batched(
+        self,
+        c: batched[Array],
+        *,
+        fixed: blike = False,
+        accepts_force: blike = False,
+    ) -> tuple[graph_t, batched[pointid]]:
+        return self._add_points_batched(
+            c.map(lambda c: point(c, fixed=fixed, accepts_force=accepts_force))
         )
 
     def _add_point(
@@ -117,15 +132,28 @@ class graph_t(eqx.Module):
     def _add_connection(
         self, c: connection, unbatch_dims: tuple[int, ...] = ()
     ) -> graph_t:
-        cs = batched.create_unbatch(c, unbatch_dims)
+        return self._add_connection_batched(batched.create_unbatch(c, unbatch_dims))
+
+    def _add_connection_batched(self, cs: batched[connection]) -> graph_t:
         return tree_at_(
             lambda me: me._connections,
             self,
             batched.concat([self._connections, cs.reshape(-1)]),
         )
 
+    def add_connection_batched(
+        self, p1: batched[pointid], p2: batched[pointid]
+    ) -> graph_t:
+        return self._add_connection_batched(batched_zip(p1, p2).tuple_map(connection))
+
     def get_point(self, pid: pointid) -> point:
         return self._points[pid._idx].unwrap()
+
+    def set_point(self, pid: pointid, new: point) -> graph_t:
+        ans = batched_treemap(
+            lambda x, y: x.at[pid._idx].set(y), self._points, batched.create(new)
+        )
+        return tree_at_(lambda me: me._points, self, ans)
 
     def get_lines(self) -> Array:
         # return accepted by Line3DCollection after tolist
@@ -162,7 +190,7 @@ class graph_t(eqx.Module):
         )
 
     def forces_aggregate(
-        self, connection_forces: batched[Array], density: fval
+        self, connection_forces: batched[Array]
     ) -> batched[force_annotation]:
         # connection_forces: >0 ==> compression
         def inner(
@@ -180,10 +208,8 @@ class graph_t(eqx.Module):
 
             force_vec_on_a = -f * v_dir
 
-            force_weight = jnp.array([0.0, 0.0, -v_len * density / 2])
-
-            ans1 = batched.create(force_annotation(c.a, force_vec_on_a + force_weight))
-            ans2 = batched.create(force_annotation(c.b, -force_vec_on_a + force_weight))
+            ans1 = batched.create(force_annotation(c.a, force_vec_on_a))
+            ans2 = batched.create(force_annotation(c.b, -force_vec_on_a))
 
             return batched.stack([ans1, ans2])
 

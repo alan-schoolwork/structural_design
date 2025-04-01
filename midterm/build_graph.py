@@ -1,36 +1,16 @@
 import math
-from dataclasses import dataclass
-from functools import partial
-from pathlib import Path
-from typing import Callable
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
-import matplotlib.pyplot as plt
-import numpy as np
-import oryx
 import sympy as s
 import sympy2jax
 from jax import Array, lax
-from jax import tree_util as jtu
 from jax._src.typing import ArrayLike
-from jax.experimental.checkify import check, checkify
-from mpl_toolkits.mplot3d import Axes3D
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from pintax import areg, convert_unit, quantity, sync_units, unitify, ureg
-from pintax._utils import pretty_print
-from pintax.functions import lstsq
 
-from lib.batched import batched, batched_vmap, do_batch, tree_do_batch, unbatch
-from lib.beam import force_profile, force_profile_builder
-from lib.checkify import checkify_simple
-from lib.graph import graph_t, point, pointid
-from lib.jax_utils import debug_print, flatten_handler
-from lib.lstsq import flstsq, flstsq_checked
-from lib.plot import plot_unit
-from lib.utils import blike, bval, debug_callback, fval, ival, jit, unique
+from lib.batched import batched, tree_do_batch
+from lib.graph import graph_t, pointid
+from lib.utils import blike, jit, unique
+from pintax import areg, sync_units
 
 
 @jit

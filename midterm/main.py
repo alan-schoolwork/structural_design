@@ -5,22 +5,18 @@ import numpy as np
 import optax
 from jax import Array, lax
 from jax import tree_util as jtu
-from jax.experimental import sparse
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from pintax import areg, convert_unit, dimensionless, magnitude, quantity, unitify
 
 from lib.batched import (
     batched,
     batched_vmap,
     batched_zip,
 )
-from lib.checkify import checkify_simple
 from lib.graph import graph_t, point
 from lib.jax_utils import debug_print
 from lib.lstsq import flstsq, flstsq_r
 from lib.utils import (
-    cast,
     cast_unchecked,
     fval,
     jit,
@@ -28,6 +24,7 @@ from lib.utils import (
     value_and_grad_aux_,
 )
 from midterm.build_graph import build_graph
+from pintax import areg, convert_unit, dimensionless, magnitude, quantity, unitify
 
 # jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "cpu")

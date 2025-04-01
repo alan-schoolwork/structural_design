@@ -98,6 +98,9 @@ class batched[T](eqx.Module):
     def reshape(self, *new_shape: int) -> batched[T]:
         bd = self.batch_dims()
 
+        if new_shape == (-1,) and len(bd) == 1:
+            return self
+
         return jtu.tree_map(
             lambda x: x.reshape(*new_shape, *x.shape[len(bd) :]),
             self,
@@ -108,9 +111,7 @@ class batched[T](eqx.Module):
     roll = _batched_treemap_of_one(jnp.roll)
 
     def __getitem__(self, idx: Any) -> batched[T]:
-        ans = jtu.tree_map(lambda x: x[idx], self)
-        _ = ans.batch_dims()
-        return ans
+        return batched_treemap(lambda x: x[idx], self)
 
     def dynamic_slice(
         self, start_indices: Sequence[ArrayLike], slice_sizes: Sequence[int]
@@ -227,7 +228,9 @@ def batched_treemap[T](f: Callable[..., Array], /, *args: batched[T]) -> batched
         handle_one(s.shape, *bufs)
         for (s, *bufs) in zip(args[0]._shapes, *(x._bufs for x in args))
     ]
-    return tree_at_(lambda x: x._bufs, args[0], new_bufs)
+    ans = tree_at_(lambda x: x._bufs, args[0], new_bufs)
+    _ = ans.batch_dims()
+    return ans
 
 
 unbatch_p = core.Primitive("unbatch")
