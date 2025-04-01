@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import (
@@ -169,4 +170,31 @@ def _wrap_value_and_grad_aux[**P](
 
 value_and_grad_aux_ = _wrap_value_and_grad_aux(jax.value_and_grad)
 
-# jit = _wrap_jit(jax.jit)
+
+@dataclass
+class objwrapper:
+    obj: Any
+
+
+def _allow_autoreload_get(x):
+    return object.__getattribute__(x, "_func").obj
+
+
+class allow_autoreload(type):
+
+    def __new__(cls, func):
+        del func
+        return super().__new__(cls, "", (), {})
+
+    def __init__(self, func):
+        type.__setattr__(self, "_func", objwrapper(func))
+
+    def __getattribute__(self, name: str):
+        return getattr(_allow_autoreload_get(self), name)
+
+    def __setattr__(self, name: str, val):
+        return setattr(_allow_autoreload_get(self), name, val)
+
+    @property
+    def __call__(self):
+        return _allow_autoreload_get(self).__call__

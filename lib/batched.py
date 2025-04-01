@@ -12,6 +12,7 @@ from jax._src import core
 from jax._src.interpreters import batching
 from jax.typing import ArrayLike
 from jax.util import safe_zip as zip
+
 from pintax._utils import pp_obj, pretty_print
 
 from .utils import blike, dict_set, ival, shape_of, tree_at_
