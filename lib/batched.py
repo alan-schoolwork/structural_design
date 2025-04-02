@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Concatenate, Sequence, overload
+import typing
+from typing import (
+    Any,
+    Callable,
+    Concatenate,
+    Protocol,
+    Sequence,
+    TypeVarTuple,
+    overload,
+)
 
 import equinox as eqx
 import jax
@@ -14,7 +23,7 @@ from jax.typing import ArrayLike
 from jax.util import safe_zip as zip
 from pintax._utils import pp_obj, pretty_print
 
-from .utils import blike, dict_set, ival, shape_of, tree_at_
+from .utils import blike, cast, dict_set, ival, shape_of, tree_at_
 
 
 def _remove_prefix(v: tuple[int, ...], prefix: tuple[int, ...]) -> tuple[int, ...]:
@@ -77,6 +86,23 @@ class batched[T](eqx.Module):
         for x in ans:
             assert x == ans[0]
         return ans[0]
+
+    @staticmethod
+    def _unreduce[T2](bds: tuple[int, ...], val: T2) -> batched[T2]:
+        return batched.create(val, bds)
+
+    @staticmethod
+    def __reduce__typed[*P, T2](f: Callable[[*P], T2], obj: tuple[*P]):
+        return f, obj
+
+    def __reduce__(self):
+        return self.__reduce__typed(
+            self._unreduce,
+            (
+                self.batch_dims(),
+                self.unflatten(),
+            ),
+        )
 
     def count(self) -> int:
         return math.prod(self.batch_dims())

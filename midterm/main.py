@@ -29,10 +29,10 @@ from lib.utils import (
 )
 from midterm.build_graph import build_graph
 
-# jax.config.update("jax_enable_x64", True)
-# jax.config.update("jax_platform_name", "cpu")
-# jax.config.update("jax_debug_nans", True)
-# jax.config.update("jax_debug_infs", True)
+jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_platform_name", "cpu")
+jax.config.update("jax_debug_nans", True)
+jax.config.update("jax_debug_infs", True)
 
 np.set_printoptions(precision=3, suppress=True)
 

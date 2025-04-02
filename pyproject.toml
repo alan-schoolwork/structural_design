@@ -37,3 +37,8 @@ jaxtyping = "^0.2.38"
 optax = "^0.2.4"
 
 pintax = { git = "https://github.com/Alan-Chen99/pintax.git" }
+jsonpickle = "^4.0.5"
+
+[tool.isort]
+profile = "black"
+known_first_party = ["lib"]
