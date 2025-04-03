@@ -16,7 +16,7 @@ from lib.batched import (
 )
 from pintax._utils import pp_obj, pretty_print
 
-from .utils import blike, fval, tree_at_
+from .utils import blike, flike, fval, tree_at_
 
 
 class point(eqx.Module):
@@ -215,6 +215,29 @@ class graph_t(eqx.Module):
 
         ans = jax.vmap(inner)(self._connections, connection_forces)
         return ans.reshape(-1)
+
+    def displacement_based_forces(
+        self, force_per_deform: flike
+    ) -> batched[force_annotation]:
+        def inner(c: connection):
+            a = self.get_point(c.a)
+            b = self.get_point(c.b)
+
+            v = b.coords - a.coords
+            v_len = jnp.linalg.norm(v)
+            v_dir = v / v_len  # vector a->b
+
+            deform = v_len / lax.stop_gradient(v_len) - 1
+
+            # > 0 : tension
+            force = (v_len - lax.stop_gradient(v_len)) / v_len * force_per_deform
+
+            ans1 = batched.create(force_annotation(c.a, force * v_dir))
+            ans2 = batched.create(force_annotation(c.b, -force * v_dir))
+
+            return batched.stack([ans1, ans2])
+
+        return self._connections.map(inner).unflatten().reshape(-1)
 
     def maybe_pin_points(self):
         return tree_at_(

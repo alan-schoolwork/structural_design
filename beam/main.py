@@ -12,7 +12,7 @@ from jax._src.typing import ArrayLike
 from matplotlib.collections import LineCollection
 
 from lib.batched import batched, batched_vmap, batched_zip, tree_do_batch
-from lib.graph import connection, force_annotation, graph_t, pointid
+from lib.graph import connection, force_annotation, graph_t, point, pointid
 from lib.lstsq import flstsq
 from lib.utils import allow_autoreload, blike, fval, jit, tree_at_, unique
 from pintax import areg, sync_units, unitify
@@ -116,11 +116,56 @@ def solve_forces(g: graph_t, external_forces: batched[force_annotation]):
     return flstsq(get_eqs, connnection_forces)
 
 
+# @jit
+def displacement_based_forces_solve(
+    g: graph_t, external_forces: batched[force_annotation]
+):
+
+    def forces_from_coords(coords: batched[point]) -> batched[Array]:
+        g2 = tree_at_(lambda g: g._points.unflatten().coords, g, coords.unflatten())
+
+        forces = batched.concat(
+            [
+                external_forces.reshape(-1),
+                g2.displacement_based_forces(1.0 * areg.force_pound),
+            ]
+        )
+
+        aggr = g.sum_annotations(g._points.map(lambda _: jnp.zeros((2,))), forces)
+        return aggr
+
+    def forces_from_coords_tangents(tangents: batched[Array]) -> batched[Array]:
+
+        def inner(coords: batched[Array]) -> batched[Array]:
+            points_ = batched_vmap(
+                lambda p, c: tree_at_(lambda p: p.coords, p, c),
+                g._points,
+                coords,
+            )
+            return forces_from_coords(points_)
+
+        primals = g._points.map(lambda x: x.coords)
+        primals_out, tangents_out = jax.jvp(forces_from_coords, (primals,), (tangents,))
+
+        return batched_vmap(lambda x, y: x + y, primals_out, tangents_out)
+
+    ans = flstsq(
+        forces_from_coords_tangents,
+        g._points.map(lambda x: jnp.zeros_like(x.coords) * areg.inch),
+    )
+
+    return ans
+
+
 @allow_autoreload
 @unitify
 def main():
 
     g, forces = build_graph()
+    ans = displacement_based_forces_solve(g, forces)
+    print(ans.x)
+    return ans
+
     ans = solve_forces(g, forces)
     print(ans.x)
 

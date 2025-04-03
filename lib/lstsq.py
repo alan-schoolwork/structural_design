@@ -7,8 +7,9 @@ import jax.tree_util as jtu
 from jax import tree_util as jtu
 from jax.experimental.checkify import check
 from jaxtyping import Array
-from pintax.functions import lstsq
 
+from lib.utils import pformat_repr
+from pintax.functions import lstsq
 
 
 class flstsq_r[T, R](eqx.Module):
@@ -18,6 +19,7 @@ class flstsq_r[T, R](eqx.Module):
     errors: R
     residuals: Array
 
+    __repr__ = pformat_repr
     # other outputs here if needed
 
 

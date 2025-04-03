@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -8,12 +9,15 @@ from typing import (
     Callable,
     Concatenate,
     Iterable,
+    Optional,
     Protocol,
+    Sequence,
     final,
 )
 
 import equinox as eqx
 import jax
+import jax._src.pretty_printer as pp
 from jax import Array
 from jax import numpy as jnp
 from jax._src import core
@@ -29,6 +33,8 @@ ival = Int[Array, ""]
 bval = Bool[Array, ""]
 
 blike = Bool[Array, ""] | bool
+
+flike = Float[ArrayLike, ""]
 
 
 @final
@@ -202,3 +208,76 @@ class _allow_autoreload(type):
 
 def allow_autoreload[T](x: T) -> T:
     return cast_unchecked(x)(_allow_autoreload(x))
+
+
+# modified from equinox
+_comma_sep = pp.concat([pp.text(","), pp.brk()])
+
+
+def bracketed(
+    name: Optional[pp.Doc],
+    indent: int,
+    objs: Sequence[pp.Doc],
+    lbracket: str,
+    rbracket: str,
+) -> pp.Doc:
+    nested = pp.concat(
+        [
+            pp.nest(indent, pp.concat([pp.brk(""), pp.join(_comma_sep, objs)])),
+            pp.brk(""),
+        ]
+    )
+    concated = []
+    if name is not None:
+        concated.append(name)
+    concated.extend([pp.text(lbracket), nested, pp.text(rbracket)])
+    return pp.group(pp.concat(concated))
+
+
+def named_objs(pairs):
+    return [
+        pp.concat([pp.text(key + "="), pretty_print(value)]) for key, value in pairs
+    ]
+
+
+def pformat_dataclass(obj) -> pp.Doc:
+    objs = named_objs(
+        [
+            (field.name, getattr(obj, field.name, pp.text("<uninitialised>")))
+            for field in dataclasses.fields(obj)
+            if field.repr
+        ]
+    )
+    return bracketed(
+        name=pp.text(obj.__class__.__name__),
+        indent=2,
+        objs=objs,
+        lbracket="(",
+        rbracket=")",
+    )
+
+
+def pformat_repr(self: Any):
+    return pformat_dataclass(self).format()
+
+
+def pretty_print(x: Any) -> pp.Doc:
+    if isinstance(x, pp.Doc):
+        return x
+    if isinstance(x, core.Tracer):
+        return x._pretty_print()
+    return pp_join(*repr(x).splitlines())
+
+
+def _pp_doc(x: pp.Doc | str) -> pp.Doc:
+    if isinstance(x, pp.Doc):
+        return x
+    return pp.text(x)
+
+
+def pp_join(*docs: pp.Doc | str, sep: pp.Doc | str = pp.brk()) -> pp.Doc:
+    return pp.join(_pp_doc(sep), [_pp_doc(x) for x in docs])
+
+
+def pp_nested(*docs: pp.Doc | str) -> pp.Doc:
+    return pp.group(pp.nest(2, pp_join(*docs)))
