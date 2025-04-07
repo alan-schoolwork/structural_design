@@ -101,14 +101,14 @@ def build_graph() -> graph_t:
     def _project_get_h(p: Array) -> Array:
         # return jnp.array(0.0)
         assert p.shape == (2,)
-        # r_min = 2.0 * areg.meters
-        r_min = r0
-        # r_min = 0.0
-        rat = jnp.maximum((jnp.linalg.norm(p) - r_min) / (radius - r_min), 0.0)
-        ans = (jnp.cosh(rat) - jnp.cosh(1)) / (jnp.cosh(0) - jnp.cosh(1))
-        return ans * height
+        # # r_min = 2.0 * areg.meters
+        # r_min = r0
+        # # r_min = 0.0
+        # rat = jnp.maximum((jnp.linalg.norm(p) - r_min) / (radius - r_min), 0.0)
+        # ans = (jnp.cosh(rat) - jnp.cosh(1)) / (jnp.cosh(0) - jnp.cosh(1))
+        # return ans * height
 
-        # return jnp.sqrt(ball_rad**2 - jnp.sum(p**2)) + sphere_center_height
+        return jnp.sqrt(ball_rad**2 - jnp.sum(p**2)) + sphere_center_height
 
     def add_point(
         g: graph_t,
@@ -298,16 +298,16 @@ def build_graph() -> graph_t:
     def connect_net_layer(l: int):
         return connect_ring(net[:, l])
 
-    # def connect_net_layer_for_all(pts: batched[pointid]):
-    #     return connect_ring(pts, extra_unbatch=(n_rings,))
+    def connect_net_layer_for_all(pts: batched[pointid]):
+        return connect_ring(pts, extra_unbatch=(n_rings,))
 
-    # jax.vmap(connect_net_layer_for_all, in_axes=1)(net)
+    jax.vmap(connect_net_layer_for_all, in_axes=1)(net)
 
-    connect_net_layer(-1)
-    # connect_net_layer(-2)
-    # connect_net_layer(-3)
-    # connect_net_layer(1)
-    connect_net_layer(0)
+    # connect_net_layer(-1)
+    # # connect_net_layer(-2)
+    # # connect_net_layer(-3)
+    # # connect_net_layer(1)
+    # connect_net_layer(0)
 
     def _make_inner_ring(i: Array):
         nonlocal g
