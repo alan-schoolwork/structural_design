@@ -32,7 +32,7 @@ def get_data():
     ans = jsonpickle.encode(graph, indent=4, make_refs=False, warn=True)
     assert isinstance(ans, str)
 
-    file = Path(__file__).parent / "data" / "structure.json"
+    file = Path(__file__).parent / "data" / "sphere1.json"
     file.write_text(ans)
 
 
