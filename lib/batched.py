@@ -142,6 +142,22 @@ class batched[T](eqx.Module):
     ) -> batched[T2]:
         return batched_vmap(lambda x: f(*x), self)
 
+    @overload
+    def split_tuple[T1, T2](
+        self: batched[tuple[T1, T2]],
+    ) -> tuple[batched[T1], batched[T2]]: ...
+
+    @overload
+    def split_tuple[T1, T2, T3](
+        self: batched[tuple[T1, T2, T3]],
+    ) -> tuple[batched[T1], batched[T2], batched[T3]]: ...
+
+    def split_tuple(self: batched[tuple]) -> tuple[batched, ...]:
+        bds = self.batch_dims()
+        me = self.unflatten()
+        assert isinstance(me, tuple)
+        return tuple(batched.create(x, bds) for x in me)
+
     def filter(self, f: Callable[[T], blike]) -> tuple[batched[T], ival]:
         return self.filter_arr(self.map(f))
 

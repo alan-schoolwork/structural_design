@@ -218,7 +218,7 @@ class graph_t(eqx.Module):
 
     def displacement_based_forces(
         self, force_per_deform: flike
-    ) -> batched[force_annotation]:
+    ) -> tuple[batched[force_annotation], batched[Array]]:
         def inner(c: connection):
             a = self.get_point(c.a)
             b = self.get_point(c.b)
@@ -229,15 +229,19 @@ class graph_t(eqx.Module):
 
             deform = v_len / lax.stop_gradient(v_len) - 1
 
-            # > 0 : tension
-            force = (v_len - lax.stop_gradient(v_len)) / v_len * force_per_deform
+            # > 0 : compression
+            force: Array = (
+                -(v_len - lax.stop_gradient(v_len)) / v_len * force_per_deform
+            )
 
-            ans1 = batched.create(force_annotation(c.a, force * v_dir))
-            ans2 = batched.create(force_annotation(c.b, -force * v_dir))
+            ans1 = batched.create(force_annotation(c.a, -force * v_dir))
+            ans2 = batched.create(force_annotation(c.b, force * v_dir))
 
-            return batched.stack([ans1, ans2])
+            return batched.stack([ans1, ans2]), force
 
-        return self._connections.map(inner).unflatten().reshape(-1)
+        annos, connection_forces = self._connections.map(inner).split_tuple()
+
+        return annos.unflatten().reshape(-1), connection_forces
 
     def maybe_pin_points(self):
         return tree_at_(

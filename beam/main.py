@@ -28,27 +28,38 @@ np.set_printoptions(precision=3, suppress=True)
 def build_graph() -> tuple[graph_t, batched[force_annotation]]:
     g = graph_t.create(2)
 
-    bot_coords = jnp.array([0.0, 1.0, 4.0, 8.0, 12.0]) * areg.inch
-    top_coords = jnp.array([1.0, 4.0, 8.0, 12.0]) * areg.inch
-    top_heights = jnp.array([4.0, 4.0, 4.0, 4.0]) * areg.inch
+    top_coords = (
+        jnp.array(
+            [
+                [-12.0, 0.0],
+                [-6.0, 2.0],
+                [0.0, 4.0],
+                [6.0, 2.0],
+                [12.0, 0.0],
+            ]
+        )
+        * areg.inch
+    )
 
-    bot_coords = jnp.concatenate([-bot_coords[1:][::-1], bot_coords])
+    bot_coords = jnp.array([-8.0, -4.0, 0.0, 4.0, 8.0]) * areg.inch
+
     g, bot_pts = g.add_point_batched(
         batched.create(bot_coords, (len(bot_coords),)).map(
             lambda x: jnp.array([x, 0.0])
         )
     )
+    g, top_pts = g.add_point_batched(batched.create(top_coords, (len(top_coords),)))
 
-    top_coords = jnp.concatenate([-top_coords[::-1], top_coords])
-    top_heights = jnp.concatenate([top_heights[::-1], top_heights])
-    g, top_pts = g.add_point_batched(
-        batched.create((top_coords, top_heights), (len(top_coords),)).map(jnp.array)
-    )
+    bot_pts = batched.concat([top_pts[:1], bot_pts, top_pts[-1:]])
 
     g = g.add_connection_batched(bot_pts[1:], bot_pts[:-1])
     g = g.add_connection_batched(top_pts[1:], top_pts[:-1])
-    g = g.add_connection_batched(top_pts, bot_pts[1:])
-    g = g.add_connection_batched(top_pts, bot_pts[:-1])
+
+    g = g.add_connection_batched(top_pts[1], bot_pts[2])
+    g = g.add_connection_batched(top_pts[-2], bot_pts[-3])
+
+    # g = g.add_connection_batched(top_pts, bot_pts[1:])
+    # g = g.add_connection_batched(top_pts, bot_pts[:-1])
 
     hold = 100.0 * areg.force_pounds
     top_contact = top_pts[
@@ -121,53 +132,54 @@ def displacement_based_forces_solve(
     g: graph_t, external_forces: batched[force_annotation]
 ):
 
-    def forces_from_coords(coords: batched[point]) -> batched[Array]:
+    def forces_from_coords(
+        coords: batched[Array],
+    ) -> tuple[batched[Array], batched[Array]]:
         g2 = tree_at_(lambda g: g._points.unflatten().coords, g, coords.unflatten())
 
-        forces = batched.concat(
-            [
-                external_forces.reshape(-1),
-                g2.displacement_based_forces(1.0 * areg.force_pound),
-            ]
-        )
+        annos, connection_fs = g2.displacement_based_forces(1.0 * areg.force_pound)
+
+        forces = batched.concat([external_forces.reshape(-1), annos])
 
         aggr = g.sum_annotations(g._points.map(lambda _: jnp.zeros((2,))), forces)
-        return aggr
+        return aggr, connection_fs
 
-    def forces_from_coords_tangents(tangents: batched[Array]) -> batched[Array]:
-
-        def inner(coords: batched[Array]) -> batched[Array]:
-            points_ = batched_vmap(
-                lambda p, c: tree_at_(lambda p: p.coords, p, c),
-                g._points,
-                coords,
-            )
-            return forces_from_coords(points_)
+    def forces_from_coords_tangents(
+        tangents: batched[Array],
+    ) -> tuple[batched[Array], batched[Array]]:
 
         primals = g._points.map(lambda x: x.coords)
-        primals_out, tangents_out = jax.jvp(forces_from_coords, (primals,), (tangents,))
+        (primals_out, _), (tangents_out, connection_fs) = jax.jvp(
+            forces_from_coords, (primals,), (tangents,)
+        )
 
-        return batched_vmap(lambda x, y: x + y, primals_out, tangents_out)
+        return (
+            batched_vmap(lambda x, y: x + y, primals_out, tangents_out),
+            connection_fs,
+        )
 
     ans = flstsq(
-        forces_from_coords_tangents,
+        lambda x: forces_from_coords_tangents(x)[0],
         g._points.map(lambda x: jnp.zeros_like(x.coords) * areg.inch),
     )
 
-    return ans
+    connection_forces = forces_from_coords_tangents(ans.x)[1]
+
+    return ans, connection_forces
 
 
 @allow_autoreload
 @unitify
 def main():
 
-    g, forces = build_graph()
-    ans = displacement_based_forces_solve(g, forces)
-    print(ans.x)
-    return ans
+    g, ext_forces = build_graph()
+    ans, forces = displacement_based_forces_solve(g, ext_forces)
 
-    ans = solve_forces(g, forces)
     print(ans.x)
+    print(forces)
+    # print("connection_fs")
+    # print(connection_fs)
+    # return ans
 
     fig = plt.figure()
     ax = fig.add_subplot()
@@ -177,7 +189,6 @@ def main():
     ax.set_ylabel("Y")
     ax.set_aspect("equal")
 
-    forces = ans.x
     f_max = jnp.max(jnp.abs(forces.unflatten()))
     print("f_max", f_max)
 
