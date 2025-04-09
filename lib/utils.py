@@ -264,8 +264,8 @@ def pformat_repr(self: Any):
 def pretty_print(x: Any) -> pp.Doc:
     if isinstance(x, pp.Doc):
         return x
-    if isinstance(x, core.Tracer):
-        return x._pretty_print()
+    # if isinstance(x, core.Tracer):
+    #     return x._pretty_print()
     return pp_join(*repr(x).splitlines())
 
 
