@@ -96,4 +96,10 @@ def declarations() -> Iterable[tuple[str, Vars]]:
 @allow_autoreload
 @unitify
 def testfn():
-    pass
+
+    for x, y in declarations():
+        print(x)
+        print(y)
+        print(get_moe(y))
+        print()
+        print()

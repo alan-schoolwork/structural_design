@@ -70,7 +70,7 @@ def testfn():
         b=1 / 4 * areg.inch,
         h=1 / 8 * areg.inch,
         W=260 * areg.force_grams,
-        L=5.5 * areg.inch,
+        L=7.0 * areg.inch,
     )
     moe1 = get_moe(vars1)
     print(
@@ -117,6 +117,21 @@ def testfn():
         h=1 / 4 * areg.inch,
         W=400 * areg.force_grams,
         L=9.5 * areg.inch,
+    )
+    moe2 = get_moe(vars2)
+    print(
+        "moe1:",
+        vars2,
+        moe2,
+        sep="\n",
+    )
+    print()
+
+    vars2 = Vars(
+        b=1 / 2 * areg.inch,
+        h=1 / 4 * areg.inch,
+        W=400 * areg.force_grams,
+        L=14.0 * areg.inch,
     )
     moe2 = get_moe(vars2)
     print(
