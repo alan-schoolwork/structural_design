@@ -1,41 +1,11 @@
 import math
-from dataclasses import dataclass
-from functools import partial
-from pathlib import Path
-from typing import Callable, Iterable, TypeVar
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
-import matplotlib.pyplot as plt
-import numpy as np
-import oryx
-from beartype import beartype as typechecker
-from jax import lax
-from jax import tree_util as jtu
-from jax._src.typing import ArrayLike, DType, Shape
-from jax.experimental.checkify import check, checkify
-from jaxtyping import Array, Bool, Float, Int, PyTree, jaxtyped
 
-from pintax import areg, convert_unit, quantity, unitify, ureg
-from pintax._utils import pretty_print
-from pintax.functions import lstsq
-
-from .beam import force_profile, force_profile_builder
-from .checkify import checkify_simple
-from .jax_utils import debug_print, flatten_handler
-from .lstsq import flstsq, flstsq_checked
-from .plot import plot_unit
 from .utils import (
-    allow_autoreload,
-    bval,
-    debug_callback,
     flike,
     fval,
-    ival,
-    jit,
-    pformat_repr,
 )
 
 
@@ -86,7 +56,7 @@ def calc_buckle(
     inertia = jnp.min(jnp.array(calc_inertia(shape, x_len)))
     # print(inertia)
 
-    return (math.pi**2 * modulus_of_elasticity * inertia) / (
+    return (math.pi**2 * jnp.array(modulus_of_elasticity) * inertia) / (
         # column effective length factor
         # (end condition)
         k_factor

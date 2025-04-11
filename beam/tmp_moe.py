@@ -1,5 +1,5 @@
 from lib.utils import allow_autoreload
-from pintax import areg, convert_unit, unitify, ureg
+from pintax import areg, convert_unit, unitify
 
 
 @allow_autoreload

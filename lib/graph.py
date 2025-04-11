@@ -16,7 +16,7 @@ from lib.batched import (
 )
 from pintax._utils import pp_obj, pretty_print
 
-from .utils import blike, flike, fval, tree_at_
+from .utils import blike, flike, tree_at_
 
 
 class point(eqx.Module):

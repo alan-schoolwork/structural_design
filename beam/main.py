@@ -1,21 +1,15 @@
-import math
-
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-import oryx
-import sympy as s
-import sympy2jax
 from jax import Array, lax
-from jax._src.typing import ArrayLike
 from matplotlib.collections import LineCollection
 
-from lib.batched import batched, batched_vmap, batched_zip, tree_do_batch
-from lib.graph import connection, force_annotation, graph_t, point, pointid
+from lib.batched import batched, batched_vmap
+from lib.graph import force_annotation, graph_t
 from lib.lstsq import flstsq
-from lib.utils import allow_autoreload, blike, fval, jit, tree_at_, unique
-from pintax import areg, sync_units, unitify
+from lib.utils import allow_autoreload, fval, jit, tree_at_
+from pintax import areg, unitify
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
