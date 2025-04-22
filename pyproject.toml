@@ -1,3 +1,22 @@
 [tool.isort]
 profile = "black"
 known_first_party = ["pintax"]
+
+[tool.pyright]
+exclude = ["**/result*", ".cache"]
+typeCheckingMode = "Strict"
+
+reportAny = false
+reportExplicitAny = false
+reportImplicitOverride = false
+reportMissingParameterType = false
+reportMissingTypeArgument = false
+reportMissingTypeStubs = false
+reportPrivateImportUsage = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnusedImport = false
+reportUnusedParameter = false

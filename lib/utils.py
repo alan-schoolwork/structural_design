@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -8,10 +9,7 @@ from typing import (
     Any,
     Callable,
     Concatenate,
-    Iterable,
-    Optional,
     Protocol,
-    Sequence,
     final,
 )
 
@@ -23,7 +21,7 @@ from jax import numpy as jnp
 from jax._src import core
 from jax._src.typing import ArrayLike
 from jax.experimental.checkify import check
-from jaxtyping import Array, Bool, Float, Int
+from jaxtyping import Bool, Float, Int
 
 proj = Path(__file__).parent.parent
 
@@ -65,6 +63,10 @@ class cast_unchecked[T]:
         return a
 
 
+def cast_unchecked_(x):
+    return cast_unchecked()(x)
+
+
 def unique[T](x: Iterable[T]) -> T:
     it = iter(x)
     first = next(it)
@@ -92,7 +94,7 @@ class _jit_fn[**JitP]:
 def _wrap_jit[**P](
     jit_fn: Callable[Concatenate[Callable, P], Any],
 ) -> _jit_fn[P]:
-    return jit_fn  # type: ignore
+    return cast_unchecked_(jit_fn)
 
 
 jit = _wrap_jit(jax.jit)
@@ -100,11 +102,6 @@ jit = _wrap_jit(jax.jit)
 
 def debug_callback[**P](f: Callable[P, None], *args: P.args, **kwargs: P.kwargs):
     jax.debug.callback(f, *args, **kwargs)
-
-
-class _marker_fn[N]:
-    def __call__(self, x: N) -> N:
-        return x
 
 
 def tree_at_[T, N](
@@ -151,11 +148,11 @@ def dict_set[K, V](d: dict[K, V], k: K) -> Callable[[V], V]:
 
 
 def shape_of(x: ArrayLike) -> tuple[int, ...]:
-    return core.get_aval(x).shape  # type: ignore
+    return core.get_aval(x).shape
 
 
 def return_of_fake[R](f: Callable[..., R]) -> R:
-    return None  # type: ignore
+    return cast_unchecked_(None)
 
 
 def check_nan(x: ArrayLike):
@@ -192,7 +189,7 @@ class _allow_autoreload(type):
         del func
         return super().__new__(cls, "", (), {})
 
-    def __init__(self, func):
+    def __init__(self, func):  # pyright: ignore[reportMissingSuperCall]
         type.__setattr__(self, "_func", objwrapper(func))
 
     def __getattribute__(self, name: str):
@@ -202,7 +199,7 @@ class _allow_autoreload(type):
         return setattr(_allow_autoreload_get(self), name, val)
 
     @property
-    def __call__(self):
+    def __call__(self):  # pyright: ignore[reportIncompatibleMethodOverride]
         return _allow_autoreload_get(self).__call__
 
 
@@ -215,7 +212,7 @@ _comma_sep = pp.concat([pp.text(","), pp.brk()])
 
 
 def bracketed(
-    name: Optional[pp.Doc],
+    name: pp.Doc | None,
     indent: int,
     objs: Sequence[pp.Doc],
     lbracket: str,
@@ -275,7 +272,9 @@ def _pp_doc(x: pp.Doc | str) -> pp.Doc:
     return pp.text(x)
 
 
-def pp_join(*docs: pp.Doc | str, sep: pp.Doc | str = pp.brk()) -> pp.Doc:
+def pp_join(*docs: pp.Doc | str, sep: pp.Doc | str | None = None) -> pp.Doc:
+    if sep is None:
+        sep = pp.brk()
     return pp.join(_pp_doc(sep), [_pp_doc(x) for x in docs])
 
 
