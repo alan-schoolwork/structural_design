@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import math
 import typing
 from collections.abc import Sequence
@@ -32,8 +33,10 @@ from .utils import (
     cast_unchecked,
     dict_set,
     ival,
+    pp_nested,
     shape_of,
     tree_at_,
+    wraps,
 )
 
 if TYPE_CHECKING:
@@ -41,9 +44,14 @@ if TYPE_CHECKING:
 
 traceback_util.register_exclusion(__file__)
 
+type Tree[T] = T
 
-def _remove_prefix(v: tuple[int, ...], prefix: tuple[int, ...]) -> tuple[int, ...]:
-    assert v[: len(prefix)] == prefix
+
+def _remove_prefix(
+    v: tuple[int, ...], prefix: tuple[int, ...], check: bool = False
+) -> tuple[int, ...]:
+    if check:
+        assert v[: len(prefix)] == prefix
     return v[len(prefix) :]
 
 
@@ -56,7 +64,9 @@ def _batched_treemap_of[**P](fn: Callable[Concatenate[tuple[Array, ...], P], Arr
     def inner[T](
         batches: Sequence[batched[T]], *args: P.args, **kwargs: P.kwargs
     ) -> batched[T]:
-        return batched_treemap(lambda *bufs: fn(bufs, *args, **kwargs), *batches)
+        return batched_treemap(
+            wraps(fn)(lambda *bufs: fn(bufs, *args, **kwargs)), *batches
+        )
 
     return inner
 
@@ -74,34 +84,50 @@ class batched[T_co](eqx.Module):
     _bufs: list[Array]
     _shapes: list[ShapeDtypeStruct] = eqx.field(static=True)
     _pytree: jtu.PyTreeDef = eqx.field(static=True)
+    _tracking: Array | None = None
 
     @staticmethod
-    def create[T2](val: T2, batch_dims: tuple[int, ...] = ()) -> batched[T2]:
+    def create[T2](
+        val: T2, batch_dims: tuple[int, ...] = (), *, broadcast: bool = False
+    ) -> batched[T2]:
         bufs, tree = jtu.tree_flatten(val)
-        assert len(bufs) > 0
-        _bufs: list[Array] = []
-        _shapes: list[ShapeDtypeStruct] = []
+        if len(bufs) == 0:
+            return batched([], [], tree, jnp.zeros(batch_dims))
 
-        for x in bufs:
-            if not isinstance(x, Array):
-                x = jnp.array(x)
-            _bufs.append(x)
-            _shapes.append(
-                ShapeDtypeStruct(_remove_prefix(x.shape, batch_dims), x.dtype)
-            )
-        return batched(_bufs, _shapes, tree)
+        try:
+            _bufs: list[Array] = []
+            _shapes: list[ShapeDtypeStruct] = []
 
-    @staticmethod
-    def create_unbatch[T2](val: T2, dims: tuple[int, ...]) -> batched[T2]:
-        return tree_unbatch(batched.create(val), dims)
+            for x in bufs:
+                if not isinstance(x, Array):
+                    x = jnp.array(x)
+                shape = _remove_prefix(x.shape, batch_dims, check=not broadcast)
+                _shapes.append(ShapeDtypeStruct(shape, x.dtype))
+                if broadcast:
+                    x, _ = jnp.broadcast_arrays(x, jnp.zeros(batch_dims + shape))
+                    assert x.shape == batch_dims + shape
+                _bufs.append(x)
+
+            return batched(_bufs, _shapes, tree)
+        except Exception as e:
+            raise Exception(f"failed to create batched: {batch_dims}\n{val}") from e
 
     def batch_dims(self) -> tuple[int, ...]:
+        if self._tracking is not None:
+            return self._tracking.shape
         ans = [
             _remove_suffix(b.shape, s.shape) for b, s in zip(self._bufs, self._shapes)
         ]
         for x in ans:
             assert x == ans[0]
         return ans[0]
+
+    def item_shape(self) -> Tree[T_co]:
+        return jtu.tree_unflatten(self._pytree, self._shapes)
+
+    @staticmethod
+    def create_unbatch[T2](val: T2, dims: tuple[int, ...]) -> batched[T2]:
+        return tree_unbatch(batched.create(val), dims)
 
     @staticmethod
     def _unreduce[T2](bds: tuple[int, ...], val: T2) -> batched[T2]:
@@ -161,6 +187,7 @@ class batched[T_co](eqx.Module):
     concat = staticmethod(_batched_treemap_of(jnp.concat))
     stack = staticmethod(_batched_treemap_of(jnp.stack))
     roll = _batched_treemap_of_one(jnp.roll)
+    transpose = _batched_treemap_of_one(jnp.transpose)
 
     def __getitem__(self, idx: Any) -> batched[T_co]:
         return batched_treemap(lambda x: x[idx], self)
@@ -362,17 +389,22 @@ def batched_treemap[T](f: Callable[..., Array], /, *args: batched[T]) -> batched
         for x in args:
             assert x._pytree == args[0]._pytree
             assert x._shapes == args[0]._shapes
+            for s1, s2 in zip(x._shapes, args[0]._shapes):
+                assert s1.shape == s2.shape
     except Exception as e:
-        raise TypeError("invalid args:", args) from e
+        raise TypeError(
+            pp_nested(
+                "batched_treemap: invalid args:",
+                pretty_print(f),
+                *(pretty_print(x.item_shape()) for x in args),
+            )
+        ) from e
 
-    _bds = [x.batch_dims() for x in args]
+    # bds = [x.batch_dims() for x in args]
 
     def handle_one(shape: tuple[int, ...], *bufs: Array):
         if len(shape) == 0:
-            ans = f(*bufs)
-            # TODO: dont use args[0] shape as return so that dtype can be changed
-            assert ans.dtype == bufs[0].dtype
-            return ans
+            return f(*bufs)
         else:
             return jax.vmap(
                 lambda *bufs: handle_one(shape[:-1], *bufs),
@@ -385,7 +417,16 @@ def batched_treemap[T](f: Callable[..., Array], /, *args: batched[T]) -> batched
         handle_one(s.shape, *bufs)
         for (s, *bufs) in zip(args[0]._shapes, *(x._bufs for x in args))
     ]
-    ans = tree_at_(lambda x: x._bufs, args[0], new_bufs)
+    # ShapeDtypeStruct(_remove_prefix(x.shape, batch_dims), x.dtype)
+
+    ans = batched(
+        _bufs=new_bufs,
+        _shapes=[
+            ShapeDtypeStruct(x.shape, dtype=b.dtype)
+            for x, b in zip(args[0]._shapes, new_bufs)
+        ],
+        _pytree=args[0]._pytree,
+    )
     _ = ans.batch_dims()
     return ans
 

@@ -8,6 +8,7 @@ import equinox as eqx
 import jax
 import jax.tree_util as jtu
 import numpy as np
+import oryx
 from jax import Array, core
 from jax import numpy as jnp
 from jax._src import linear_util as lu
@@ -16,6 +17,8 @@ from jax._src.traceback_util import api_boundary
 from jax._src.typing import ArrayLike
 
 from lib.utils import cast, cast_unchecked_
+from pintax import quantity
+from pintax._helpers import zeros_like_same_unit
 
 traceback_util.register_exclusion(__file__)
 
@@ -78,6 +81,13 @@ class jaxpr_with_tree[**P, T](eqx.Module):
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
         in_arrs = self.in_tree.flatten_up_to((args, kwargs))
+
+        for arg, v in zip(in_arrs, self.jaxpr.invars):
+            assert (
+                jnp.shape(arg)
+                == v.aval.shape  # pyright: ignore[reportAttributeAccessIssue]
+            )
+
         ans = core.eval_jaxpr(self.jaxpr, self.jaxpr_consts, *in_arrs)
         return self.out_tree.unflatten(ans)
 
@@ -113,7 +123,7 @@ class flatten_handler[T](eqx.Module):
     def create[T2](val: T2) -> tuple[flatten_handler[T2], Array]:
 
         def inner(val_: T2) -> Array:
-            bufs, tree = jtu.tree_flatten(val_)
+            bufs, _tree = jtu.tree_flatten(val_)
             return jnp.concat([x.ravel() for x in bufs])
 
         flatten = fn_as_traced(inner)(val)
@@ -150,3 +160,36 @@ def debug_callback[**P](fn: Callable, *args: P.args, **kwargs: P.kwargs):
 @cast(print)
 def debug_print(*args, **kwargs):
     debug_callback(print, *args, **kwargs)
+
+
+def oryx_var(name: str, tag: str, default_val: ArrayLike) -> Array:
+    default = quantity(default_val)
+
+    ans = oryx.core.sow(jnp.array(default.m), name=name, tag=tag)
+    return jnp.array(ans) * default.u
+
+
+def oryx_unzip[R](fn: Callable[[], R], tag: str) -> tuple[
+    dict[str, Array],
+    Callable[[dict[str, Array]], R],
+]:
+    default_vals = cast[dict[str, Array]]()(
+        oryx.core.reap(fn, tag=tag)(),
+    )
+
+    def inner(updated_vals: dict[str, Array]) -> R:
+        return oryx.core.plant(fn, tag=tag)(plants=updated_vals)
+
+    return default_vals, fn_as_traced(inner)(default_vals)
+
+
+@jax.custom_jvp
+def primal_to_zero(x: Array):
+    return zeros_like_same_unit(x)
+
+
+@primal_to_zero.defjvp
+def _(primals: tuple[Array], tangents: tuple[Array]):
+    (x,) = primals
+    (dx,) = tangents
+    return primal_to_zero(x), dx

@@ -16,8 +16,11 @@ from typing import (
 import equinox as eqx
 import jax
 import jax._src.pretty_printer as pp
+import oryx
 from jax import Array
 from jax import numpy as jnp
+from jax import tree_util as jtu
+from jax import util as ju
 from jax._src import core
 from jax._src.typing import ArrayLike
 from jax.experimental.checkify import check
@@ -294,3 +297,20 @@ def concatenate(
     arrays: Sequence[Any], axis: int | None = 0, dtype: DTypeLike | None = None
 ) -> Array:
     return jnp.concatenate([jnp.array(x) for x in arrays], axis, dtype)
+
+
+def vmap[*A, R](args: tuple[*A], f: Callable[[*A], R]) -> R:
+    return jax.vmap(f)(*args)
+
+
+def wraps(fn):
+    return ju.wraps(fn)
+
+
+def _tree_map[T](
+    f: Callable, tree: T, *rest: T, is_leaf: Callable[[Any], bool] | None = None
+) -> T:
+    assert False
+
+
+tree_map = cast_unchecked(_tree_map)(jtu.tree_map)

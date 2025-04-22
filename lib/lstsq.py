@@ -7,19 +7,22 @@ from jax import tree_util as jtu
 from jax.experimental.checkify import check
 from jaxtyping import Array
 
-from lib.utils import pformat_repr
+from lib.jax_utils import flatten_handler
+from lib.utils import cast_unchecked, pformat_repr
 from pintax.functions import lstsq
 
 
 class flstsq_r[T, R](eqx.Module):
     const: R
+    mat_flat: Array
 
     x: T
     errors: R
     residuals: Array
+    rank: Array
+    singular_values: Array
 
     __repr__ = pformat_repr
-    # other outputs here if needed
 
 
 def flstsq[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
@@ -28,85 +31,36 @@ def flstsq[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
     updated input x and const as the function output at
     the original point.
     """
-    # Flatten example input into a single array.
-    arg_bufs, arg_tree = jtu.tree_flatten(arg_example)
-    for x in arg_bufs:
-        assert x.dtype == arg_bufs[0].dtype, "All inputs must have the same dtype."
 
-    def flatten_args(args_list):
-        return jnp.concatenate([a.ravel() for a in args_list], axis=0)
+    arg_tree, arg_flat = flatten_handler.create(arg_example)
+    ans_tree = cast_unchecked[flatten_handler[R]]()(None)
 
-    def split_args(args_flat):
-        """Invert flatten_args: split args_flat into shapes like arg_bufs."""
-        offset = 0
-        pieces = []
-        for buf in arg_bufs:
-            size = buf.size
-            piece = args_flat[offset : offset + size].reshape(buf.shape)
-            pieces.append(piece)
-            offset += size
-        return pieces
+    def inner(arg_flat: Array) -> tuple[Array, Array]:
+        nonlocal ans_tree
 
-    # Flatten the original argument into one big 1D array.
-    args_concatenated = flatten_args(arg_bufs)
+        arg = arg_tree.unflatten(arg_flat)
+        ans = f(arg)
+        ans_tree, ans_flat = flatten_handler.create(ans)
+        return ans_flat, ans_flat
 
-    # Example function output structure, to help shape the flattened outputs.
-    out_example = f(arg_example)
-    out_bufs_example, out_tree_example = jtu.tree_flatten(out_example)
+    mat, const_flat = jax.jacobian(inner, has_aux=True)(arg_flat)
 
-    def flatten_out(out_val):
-        """Flatten the function output to a 1D array."""
-        bufs, _ = jtu.tree_flatten(out_val)
-        return jnp.concatenate([b.ravel() for b in bufs], axis=0)
+    assert isinstance(mat, Array)
+    assert isinstance(const_flat, Array)
 
-    def split_out(out_flat):
-        """Unflatten a 1D output array back into the original output structure."""
-        offset = 0
-        pieces = []
-        for b in out_bufs_example:
-            size = b.size
-            piece = out_flat[offset : offset + size].reshape(b.shape)
-            pieces.append(piece)
-            offset += size
-        return jtu.tree_unflatten(out_tree_example, pieces)
+    delta_arg_flat, resid, rank, singular_values = lstsq(mat, -const_flat, rcond=None)
 
-    def inner(args_flat: jnp.ndarray):
-        # From the single 1D array, reconstruct inputs as a PyTree.
-        ipt = jtu.tree_unflatten(arg_tree, split_args(args_flat))
-        # Evaluate the user function.
-        out_val = f(ipt)
-        out_flat = flatten_out(out_val)
-        # Return (output, output) so the second can be treated as aux by jax.jacobian.
-        return out_flat, out_flat
+    errors_flat = mat @ delta_arg_flat + const_flat
 
-    # Compute the Jacobian (mat) of inner w.r.t. inputs, and also get “const” as the aux part.
-    mat, const_flat = jax.jacobian(inner, has_aux=True)(args_concatenated)
-    # Now mat has shape [output_dim, input_dim], and const_flat has shape [output_dim].
-
-    # Solve the linear system mat @ δx ≈ −const (a least-squares problem).
-    # delta_args_flat, _, _, _ = lstsq(mat, -const_flat, rcond=None)
-    delta_args_flat = lstsq_safe(mat, -const_flat)
-    # assert False
-
-    errors_flat = mat @ delta_args_flat + const_flat
-
-    # Construct the new input by adding δx to the original arg_bufs.
-    updated_bufs = [
-        orig + δ.reshape(orig.shape)  # reshape in case the dimension matches
-        for orig, δ in zip(arg_bufs, split_args(delta_args_flat))
-    ]
-    new_x = jtu.tree_unflatten(arg_tree, updated_bufs)
-
-    # Unflatten const_flat so it matches the structure of the original function output.
-    const_unflat = split_out(const_flat)
-    # mat @
-
-    # Return the result dataclass with the original output as const and updated input x.
     return flstsq_r(
-        const=const_unflat,
-        x=new_x,
-        errors=split_out(errors_flat),
-        residuals=jnp.sum(errors_flat**2),
+        mat_flat=mat,
+        const=ans_tree.unflatten(const_flat),
+        #
+        x=arg_tree.unflatten(arg_flat + delta_arg_flat),
+        errors=ans_tree.unflatten(errors_flat),
+        residuals=resid,
+        rank=rank,
+        singular_values=singular_values,
     )
 
 

@@ -7,6 +7,7 @@ import equinox as eqx
 import jax
 from jax import Array, lax
 from jax import numpy as jnp
+from jax.typing import ArrayLike
 
 from lib.batched import (
     batched,
@@ -16,7 +17,7 @@ from lib.batched import (
 )
 from pintax._utils import pp_obj, pretty_print
 
-from .utils import blike, flike, tree_at_
+from .utils import blike, flike, pformat_repr, tree_at_
 
 
 class point(eqx.Module):
@@ -25,8 +26,7 @@ class point(eqx.Module):
     fixed: blike
     accepts_force: blike
 
-    def __repr__(self):
-        return pp_obj("point", pretty_print(self.coords)).format()
+    __repr__ = pformat_repr
 
     def maybe_pin(self) -> point:
         ans = lax.select(
@@ -38,22 +38,24 @@ class point(eqx.Module):
 class pointid(eqx.Module):
     _idx: Array
 
-    def __repr__(self):
-        return pp_obj("pointid", pretty_print(self._idx)).format()
+    __repr__ = pformat_repr
 
 
 class connection(eqx.Module):
     a: pointid
     b: pointid
-    force_per_deform: Array | None = None
+    force_per_deform: ArrayLike = 0.0
+    weight: ArrayLike = 0.0
+    density: ArrayLike = 0.0
 
-    def __repr__(self):
-        return pp_obj("connection", pretty_print(self.a), pretty_print(self.b)).format()
+    __repr__ = pformat_repr
 
 
 class force_annotation(eqx.Module):
     p: pointid
     f: Array
+
+    __repr__ = pformat_repr
 
 
 class graph_t(eqx.Module):
@@ -167,27 +169,34 @@ class graph_t(eqx.Module):
 
         return self._connections.map(inner).unflatten()
 
-    def sum_annotations(
-        self, prev: batched[Array], annotations: batched[force_annotation]
-    ) -> batched[Array]:
+    def sum_annotations(self) -> batched[Array]:
         n = len(self._points)
-        assert prev.batch_dims() == (n,)
-        assert len(annotations.batch_dims()) == 1
 
-        anno_buf = annotations.unflatten()
-        buf = prev.unflatten()
+        anno_buf = self._external_forces.unflatten()
+
+        buf = jnp.zeros_like(self._points.uf.coords)
 
         return batched.create(buf.at[anno_buf.p._idx].add(anno_buf.f), batch_dims=(n,))
 
-    def add_external_force(
-        self, x: force_annotation, unbatch_dims: tuple[int, ...] = ()
-    ):
-        xs = batched.create_unbatch(x, unbatch_dims)
+    def add_external_force(self, xs: force_annotation):
+        return self.add_external_force_batched(batched.create(xs))
+
+    def add_external_force_batched(self, xs: batched[force_annotation]):
         return tree_at_(
             lambda me: me._external_forces,
             self,
             batched.concat([self._external_forces, xs.reshape(-1)]),
         )
+
+    # def add_external_force(
+    #     self, x: force_annotation, unbatch_dims: tuple[int, ...] = ()
+    # ):
+    #     xs = batched.create_unbatch(x, unbatch_dims)
+    #     return tree_at_(
+    #         lambda me: me._external_forces,
+    #         self,
+    #         batched.concat([self._external_forces, xs.reshape(-1)]),
+    #     )
 
     def forces_aggregate(
         self, connection_forces: batched[Array]
@@ -215,33 +224,6 @@ class graph_t(eqx.Module):
 
         ans = jax.vmap(inner)(self._connections, connection_forces)
         return ans.reshape(-1)
-
-    def displacement_based_forces(
-        self, force_per_deform: flike
-    ) -> tuple[batched[force_annotation], batched[Array]]:
-        def inner(c: connection):
-            a = self.get_point(c.a)
-            b = self.get_point(c.b)
-
-            v = b.coords - a.coords
-            v_len = jnp.linalg.norm(v)
-            v_dir = v / v_len  # vector a->b
-
-            # deform = v_len / lax.stop_gradient(v_len) - 1
-
-            # > 0 : compression
-            force: Array = (
-                -(v_len - lax.stop_gradient(v_len)) / v_len * force_per_deform
-            )
-
-            ans1 = batched.create(force_annotation(c.a, -force * v_dir))
-            ans2 = batched.create(force_annotation(c.b, force * v_dir))
-
-            return batched.stack([ans1, ans2]), force
-
-        annos, connection_forces = self._connections.map(inner).split_tuple()
-
-        return annos.unflatten().reshape(-1), connection_forces
 
     def maybe_pin_points(self):
         return tree_at_(

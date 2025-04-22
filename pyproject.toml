@@ -25,14 +25,14 @@ pandas = "^2.2.3"
 colorama = "^0.4.6"
 beartype = "^0.20.0"
 
-jax = { version = "^0.5.0", extras = ["cuda"] }
+jax = { version = "==0.5.0", extras = ["cuda"] }
 oryx = "^0.2.9"
 equinox = "^0.11.11"
 sympy2jax = "^0.0.6"
 jaxtyping = "^0.2.38"
 optax = "^0.2.4"
 
-pintax = { git = "https://github.com/Alan-Chen99/pintax.git" }
+# pintax = { git = "https://github.com/Alan-Chen99/pintax.git" }
 jsonpickle = "^4.0.5"
 
 [tool.isort]
@@ -41,10 +41,11 @@ known_first_party = ["pintax", "lib"]
 
 [tool.pyright]
 exclude = ["**/result*", ".cache"]
-typeCheckingMode = "Strict"
+typeCheckingMode = "strict"
 
 reportAny = false
 reportExplicitAny = false
+reportIgnoreCommentWithoutRule = false
 reportImplicitOverride = false
 reportImportCycles = false
 reportMissingParameterType = false
