@@ -3,7 +3,6 @@ from typing import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
 from jax import tree_util as jtu
 from jax.experimental.checkify import check
 from jaxtyping import Array

@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Concatenate, Sequence, overload
+import typing
+from collections.abc import Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Concatenate,
+    Protocol,
+    TypeVarTuple,
+    overload,
+)
 
 import equinox as eqx
 import jax
@@ -15,7 +25,19 @@ from jax.util import safe_zip as zip
 
 from pintax._utils import pp_obj, pretty_print
 
-from .utils import blike, dict_set, ival, shape_of, tree_at_
+from .utils import (
+    blike,
+    cast,
+    cast_fsig,
+    cast_unchecked,
+    dict_set,
+    ival,
+    shape_of,
+    tree_at_,
+)
+
+if TYPE_CHECKING:
+    from jax._src.basearray import _IndexUpdateRef as _IndexUpdateRef_jax
 
 traceback_util.register_exclusion(__file__)
 
@@ -48,7 +70,7 @@ def _batched_treemap_of_one[**P](
     return inner
 
 
-class batched[T](eqx.Module):
+class batched[T_co](eqx.Module):
     _bufs: list[Array]
     _shapes: list[ShapeDtypeStruct] = eqx.field(static=True)
     _pytree: jtu.PyTreeDef = eqx.field(static=True)
@@ -81,23 +103,51 @@ class batched[T](eqx.Module):
             assert x == ans[0]
         return ans[0]
 
+    @staticmethod
+    def _unreduce[T2](bds: tuple[int, ...], val: T2) -> batched[T2]:
+        return batched.create(val, bds)
+
+    @staticmethod
+    def __reduce__typed[*P, T2](f: Callable[[*P], T2], obj: tuple[*P]):
+        return f, obj
+
+    def __reduce__(self):
+        return self.__reduce__typed(
+            self._unreduce,
+            (
+                self.batch_dims(),
+                self.unflatten(),
+            ),
+        )
+
     def count(self) -> int:
         return math.prod(self.batch_dims())
 
-    def unflatten(self) -> T:
+    def unflatten(self) -> T_co:
         return jtu.tree_unflatten(self._pytree, self._bufs)
 
-    def unwrap(self) -> T:
+    @property
+    def uf(self):
+        return self.unflatten()
+
+    def unwrap(self) -> T_co:
         assert self.batch_dims() == ()
         return self.unflatten()
 
     def __repr__(self):
         return pp_obj("batched", pretty_print(self.unflatten())).format()
 
-    def repeat(self, n: int) -> batched[T]:
+    @staticmethod
+    @cast_fsig(jnp.arange)
+    def arange(*args, **kwargs) -> batched[Array]:
+        ans = jnp.arange(*args, **kwargs)
+        (n,) = ans.shape
+        return batched.create(ans, (n,))
+
+    def repeat(self, n: int) -> batched[T_co]:
         return jax.vmap(lambda: self, axis_size=n)()
 
-    def reshape(self, *new_shape: int) -> batched[T]:
+    def reshape(self, *new_shape: int) -> batched[T_co]:
         bd = self.batch_dims()
 
         if new_shape == (-1,) and len(bd) == 1:
@@ -112,12 +162,12 @@ class batched[T](eqx.Module):
     stack = staticmethod(_batched_treemap_of(jnp.stack))
     roll = _batched_treemap_of_one(jnp.roll)
 
-    def __getitem__(self, idx: Any) -> batched[T]:
+    def __getitem__(self, idx: Any) -> batched[T_co]:
         return batched_treemap(lambda x: x[idx], self)
 
     def dynamic_slice(
         self, start_indices: Sequence[ArrayLike], slice_sizes: Sequence[int]
-    ) -> batched[T]:
+    ) -> batched[T_co]:
         bds = self.batch_dims()
         assert len(bds) == len(start_indices)
         assert len(bds) == len(slice_sizes)
@@ -134,8 +184,11 @@ class batched[T](eqx.Module):
     def __len__(self) -> int:
         return self.batch_dims()[0]
 
-    def map[T2](self, f: Callable[[T], T2]) -> batched[T2]:
+    def map[T2](self, f: Callable[[T_co], T2]) -> batched[T2]:
         return batched_vmap(f, self)
+
+    def map1d[T2](self, f: Callable[[batched[T_co]], batched[T2]]) -> batched[T2]:
+        return jax.vmap(f)(self)
 
     def tuple_map[*T1, T2](
         self: batched[tuple[*T1]], f: Callable[[*T1], T2]
@@ -158,10 +211,10 @@ class batched[T](eqx.Module):
         assert isinstance(me, tuple)
         return tuple(batched.create(x, bds) for x in me)
 
-    def filter(self, f: Callable[[T], blike]) -> tuple[batched[T], ival]:
+    def filter(self, f: Callable[[T_co], blike]) -> tuple[batched[T_co], ival]:
         return self.filter_arr(self.map(f))
 
-    def filter_arr(self, bools_: batched[blike]) -> tuple[batched[T], ival]:
+    def filter_arr(self, bools_: batched[blike]) -> tuple[batched[T_co], ival]:
         (n,) = self.batch_dims()
 
         bools = bools_.unflatten()
@@ -170,9 +223,85 @@ class batched[T](eqx.Module):
 
         idxs = jnp.nonzero(bools, size=n, fill_value=0)
 
-        ans: batched[T] = jtu.tree_map(lambda x: x[idxs], self)
+        ans: batched[T_co] = jtu.tree_map(lambda x: x[idxs], self)
         assert ans.batch_dims() == (n,)
         return ans, bools.sum()
+
+    def scan[T2, T3](
+        self, f: Callable[[T2, T_co], tuple[T2, T3]], init: T2
+    ) -> tuple[T2, batched[T3]]:
+        (_,) = self.batch_dims()
+
+        def inner(c: T2, x: batched[T_co]):
+            c, y = f(c, x.unwrap())
+            return c, batched.create(y)
+
+        return lax.scan(inner, init=init, xs=self)
+
+    def thread[T2](self: batched[Callable[[T2], T2]], init: T2) -> T2:
+        (_,) = self.batch_dims()
+
+        def inner(c: T2, f: batched[Callable[[T2], T2]]):
+            return f.unwrap()(c), None
+
+        ans, _ = lax.scan(inner, init=init, xs=self)
+        return ans
+
+    def all_idxs(self) -> batched[tuple[ival, ...]]:
+        bds = self.batch_dims()
+        if len(bds) == 0:
+            return batched.create(())
+        n = bds[0]
+
+        def inner(i: batched[ival], v: batched[T_co]) -> batched[tuple[ival, ...]]:
+            return v.all_idxs().map(lambda rest: (i.unwrap(), *rest))
+
+        return jax.vmap(inner)(batched.arange(n), self)
+
+    def enumerate[R](
+        self,
+        f: (
+            Callable[[T_co], R]
+            | Callable[[T_co, ival], R]
+            | Callable[[T_co, ival, ival], R]
+            | Callable[[T_co, ival, ival, ival], R]
+        ),
+    ) -> batched[R]:
+        f_ = cast_unchecked["Callable[[T_co, *tuple[ival, ...]], R]"]()(f)
+        idxs = self.all_idxs()
+        return batched_zip(self, idxs).tuple_map(lambda v, idx: f_(v, *idx))
+
+    def split_batch_dims(
+        self,
+        *,
+        outer: tuple[int, ...] | None = None,
+        inner: tuple[int, ...] | None = None,
+    ) -> batched[batched[T_co]]:
+        bds = self.batch_dims()
+
+        if inner is None:
+            assert not outer is None
+            inner = bds[len(outer) :]
+        if outer is None:
+            outer = bds[: -len(inner)]
+
+        assert bds == outer + inner
+        return batched.create(self, outer)
+
+    def sort(self, key: Callable[[T_co], Array]):
+        def inner(v: T_co):
+            ans = key(v)
+            assert isinstance(ans, Array)
+            assert ans.shape == ()
+            return ans
+
+        keys = self.map(inner)
+        sorted_indices = jnp.argsort(keys.uf)
+        return self[sorted_indices]
+
+    @property
+    def at(self):
+        return _IndexUpdateHelper(self)
 
 
 @overload
@@ -200,8 +329,18 @@ def batched_vmap[R](f: Callable[..., R], *args: batched) -> batched[R]:
     return jax.vmap(inner)(*args)
 
 
-def batched_zip[T1, T2](a1: batched[T1], a2: batched[T2], /) -> batched[tuple[T1, T2]]:
-    return batched_vmap(lambda *args: args, a1, a2)
+@overload
+def batched_zip[T1, T2](
+    a1: batched[T1], a2: batched[T2], /
+) -> batched[tuple[T1, T2]]: ...
+@overload
+def batched_zip[T1, T2, T3](
+    a1: batched[T1], a2: batched[T2], a3: batched[T3], /
+) -> batched[tuple[T1, T2, T3]]: ...
+
+
+def batched_zip[T](*args: batched[T]) -> batched[tuple]:
+    return batched_vmap(lambda *args: args, *args)
 
 
 @overload
@@ -226,7 +365,7 @@ def batched_treemap[T](f: Callable[..., Array], /, *args: batched[T]) -> batched
     except Exception as e:
         raise TypeError("invalid args:", args) from e
 
-    bds = [x.batch_dims() for x in args]
+    _bds = [x.batch_dims() for x in args]
 
     def handle_one(shape: tuple[int, ...], *bufs: Array):
         if len(shape) == 0:
@@ -344,3 +483,73 @@ def _(
 # @unitify_rules(do_batch_p)
 # def _(x, ref):
 #     return x
+
+
+class _IndexUpdateHelper[T](eqx.Module):
+    _v: batched[T]
+
+    def __getitem__(self, index: Any) -> _IndexUpdateRef[T]:
+        return _IndexUpdateRef(self._v, index)
+
+
+def _index_update_meth1[**P](
+    fn: Callable[
+        [type[_IndexUpdateRef_jax]],
+        Callable[Concatenate[_IndexUpdateRef_jax, P], Array],
+    ],
+):
+    def inner[T](
+        self: _IndexUpdateRef[T], /, *args: P.args, **kwargs: P.kwargs
+    ) -> batched[T]:
+
+        def inner2(x: Array):
+            _ref = x.at[self._idx]
+            return fn(type(_ref))(_ref, *args, **kwargs)
+
+        return batched_treemap(inner2, self._v)
+
+    return inner
+
+
+def _index_update_meth2[**P](
+    fn: Callable[
+        [type[_IndexUpdateRef_jax]],
+        Callable[Concatenate[_IndexUpdateRef_jax, Array, P], Array],
+    ],
+):
+    def inner[T](
+        self: _IndexUpdateRef[T],
+        values: batched[T],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> batched[T]:
+
+        def inner2(x: Array, y: Array):
+            _ref = x.at[self._idx]
+            return fn(type(_ref))(_ref, y, *args, **kwargs)
+
+        return batched_treemap(inner2, self._v, values)
+
+    return inner
+
+
+class _IndexUpdateRef[T](eqx.Module):
+    _v: batched[T]
+    _idx: Any
+
+    get = _index_update_meth1(lambda x: x.get)
+    set = _index_update_meth2(lambda x: x.set)
+
+    def dynamic_slice(self, slice_sizes: Sequence[int]):
+        return self._v.dynamic_slice(self._idx, slice_sizes)
+
+    def dynamic_update(
+        self, values: batched[T], allow_negative_indices: bool | Sequence[bool] = True
+    ):
+        def update_one(x: Array, y: Array):
+            return lax.dynamic_update_slice(
+                x, y, self._idx, allow_negative_indices=allow_negative_indices
+            )
+
+        return batched_treemap(update_one, self._v, values)

@@ -21,6 +21,7 @@ from jax import numpy as jnp
 from jax._src import core
 from jax._src.typing import ArrayLike
 from jax.experimental.checkify import check
+from jax.typing import DTypeLike
 from jaxtyping import Bool, Float, Int
 
 proj = Path(__file__).parent.parent
@@ -65,6 +66,13 @@ class cast_unchecked[T]:
 
 def cast_unchecked_(x):
     return cast_unchecked()(x)
+
+
+def cast_fsig[**P, R](f1: Callable[P, Any]):
+    def inner(f2: Callable[..., R]) -> Callable[P, R]:
+        return f2
+
+    return inner
 
 
 def unique[T](x: Iterable[T]) -> T:
@@ -148,7 +156,7 @@ def dict_set[K, V](d: dict[K, V], k: K) -> Callable[[V], V]:
 
 
 def shape_of(x: ArrayLike) -> tuple[int, ...]:
-    return core.get_aval(x).shape
+    return core.get_aval(x).shape  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def return_of_fake[R](f: Callable[..., R]) -> R:
@@ -280,3 +288,9 @@ def pp_join(*docs: pp.Doc | str, sep: pp.Doc | str | None = None) -> pp.Doc:
 
 def pp_nested(*docs: pp.Doc | str) -> pp.Doc:
     return pp.group(pp.nest(2, pp_join(*docs)))
+
+
+def concatenate(
+    arrays: Sequence[Any], axis: int | None = 0, dtype: DTypeLike | None = None
+) -> Array:
+    return jnp.concatenate([jnp.array(x) for x in arrays], axis, dtype)

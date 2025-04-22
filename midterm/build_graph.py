@@ -15,7 +15,7 @@ from pintax import areg, sync_units
 
 @jit
 def circle_intersection(p1_: Array, p2_: Array, r1_v_: Array, r2_v_: Array):
-    args, u = sync_units(p1_, p2_, r1_v_, r2_v_)
+    args, u = sync_units((p1_, p2_, r1_v_, r2_v_))
     p1, p2, r1_v, r2_v = map(jnp.array, args)
 
     x, y = s.symbols("x y")
@@ -41,7 +41,7 @@ def circle_intersection(p1_: Array, p2_: Array, r1_v_: Array, r2_v_: Array):
         r1=r1_v,
         r2=r2_v,
     )
-    u_ = u.as_array()
+    u_ = u.a
     return jnp.array(ans0) * u_, jnp.array(ans1) * u_
 
 

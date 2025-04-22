@@ -45,6 +45,7 @@ class pointid(eqx.Module):
 class connection(eqx.Module):
     a: pointid
     b: pointid
+    force_per_deform: Array | None = None
 
     def __repr__(self):
         return pp_obj("connection", pretty_print(self.a), pretty_print(self.b)).format()
@@ -120,7 +121,6 @@ class graph_t(eqx.Module):
         count = math.prod(dims)
         idxs = self._points.count() + jnp.arange(count)
         new_points = batched.concat([self._points, points.reshape(-1)])
-        tmp = batched.create(pointid(idxs), (count,))
         ans_pids = batched.create(pointid(idxs), (count,)).reshape(*dims)
         return tree_at_(lambda me: me._points, self, new_points), ans_pids
 
@@ -227,7 +227,7 @@ class graph_t(eqx.Module):
             v_len = jnp.linalg.norm(v)
             v_dir = v / v_len  # vector a->b
 
-            deform = v_len / lax.stop_gradient(v_len) - 1
+            # deform = v_len / lax.stop_gradient(v_len) - 1
 
             # > 0 : compression
             force: Array = (
