@@ -9,6 +9,7 @@ from typing import (
     Any,
     Callable,
     Concatenate,
+    Never,
     Protocol,
     TypeVarTuple,
     overload,
@@ -36,6 +37,7 @@ from .utils import (
     pp_nested,
     shape_of,
     tree_at_,
+    unreachable,
     wraps,
 )
 
@@ -210,6 +212,9 @@ class batched[T_co](eqx.Module):
 
     def __len__(self) -> int:
         return self.batch_dims()[0]
+
+    def __iter__(self) -> Never:
+        assert False
 
     def map[T2](self, f: Callable[[T_co], T2]) -> batched[T2]:
         return batched_vmap(f, self)
@@ -585,12 +590,12 @@ class _IndexUpdateRef[T](eqx.Module):
     def dynamic_slice(self, slice_sizes: Sequence[int]):
         return self._v.dynamic_slice(self._idx, slice_sizes)
 
-    def dynamic_update(
-        self, values: batched[T], allow_negative_indices: bool | Sequence[bool] = True
-    ):
-        def update_one(x: Array, y: Array):
-            return lax.dynamic_update_slice(
-                x, y, self._idx, allow_negative_indices=allow_negative_indices
-            )
+    # def dynamic_update(
+    #     self, values: batched[T], allow_negative_indices: bool | Sequence[bool] = True
+    # ):
+    #     def update_one(x: Array, y: Array):
+    #         return lax.dynamic_update_slice(
+    #             x, y, self._idx, allow_negative_indices=allow_negative_indices
+    #         )
 
-        return batched_treemap(update_one, self._v, values)
+    #     return batched_treemap(update_one, self._v, values)

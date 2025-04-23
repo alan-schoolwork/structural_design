@@ -9,6 +9,7 @@ from typing import (
     Any,
     Callable,
     Concatenate,
+    Never,
     Protocol,
     final,
 )
@@ -17,7 +18,7 @@ import equinox as eqx
 import jax
 import jax._src.pretty_printer as pp
 import oryx
-from jax import Array
+from jax import Array, lax
 from jax import numpy as jnp
 from jax import tree_util as jtu
 from jax import util as ju
@@ -299,8 +300,20 @@ def concatenate(
     return jnp.concatenate([jnp.array(x) for x in arrays], axis, dtype)
 
 
-def vmap[*A, R](args: tuple[*A], f: Callable[[*A], R]) -> R:
-    return jax.vmap(f)(*args)
+def _wrap_vmap[**P](jax_vmap: Callable[Concatenate[Callable, P], Any]):
+
+    def inner[*A, R](
+        args: tuple[*A],
+        f: Callable[[*A], R],
+        *vmap_args: P.args,
+        **vmap_kwargs: P.kwargs,
+    ) -> R:
+        return jax_vmap(f, *vmap_args, **vmap_kwargs)(*args)
+
+    return inner
+
+
+vmap = _wrap_vmap(jax.vmap)
 
 
 def wraps(fn):
@@ -314,3 +327,24 @@ def _tree_map[T](
 
 
 tree_map = cast_unchecked(_tree_map)(jtu.tree_map)
+
+
+def unreachable(x: Never) -> Never:
+    raise RuntimeError("unreachable", x)
+
+
+def tree_select[T](
+    pred: ArrayLike,
+    on_true: T,
+    on_false: T,
+) -> T:
+    pred_ = jnp.array(pred)
+    bufs_true, tree1 = jtu.tree_flatten(on_true)
+    bufs_false, tree2 = jtu.tree_flatten(on_false)
+    if tree1 != tree2:
+        raise TypeError(f"tree mismatch: {tree1} {tree2}")
+    out_bufs = [
+        x if x is y else lax.select(pred_, on_true=x, on_false=y)
+        for x, y in zip(bufs_true, bufs_false)
+    ]
+    return jtu.tree_unflatten(tree1, out_bufs)

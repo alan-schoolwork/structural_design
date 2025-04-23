@@ -8,16 +8,17 @@ import numpy as np
 from jax import Array, lax
 from matplotlib.collections import LineCollection
 
-from pintax import areg, unitify
+from pintax import areg, quantity, unitify
 from pintax._helpers import zeros_like_same_unit
 from pintax.unstable import pint_registry
 
-from .batched import batched, batched_vmap
+from .batched import batched, batched_vmap, batched_zip
 from .graph import connection, force_annotation, graph_t
 from .jax_utils import debug_print, fn_as_traced, primal_to_zero
-from .lstsq import flstsq
+from .lstsq import flstsq, flstsq_r
 from .utils import (
     allow_autoreload,
+    cast,
     cast_unchecked,
     fval,
     jit,
@@ -26,24 +27,58 @@ from .utils import (
     tree_map,
 )
 
-# pint_registry().define("eps_disp=[eps_disp]")
+pint_registry().define("eps_disp=[eps_disp]")
 
 
-@jax.custom_jvp
-def stop_gradient_once(x: Array) -> Array:
-    assert False
+# @jax.custom_jvp
+# def stop_gradient_once(x: Array) -> Array:
+#     assert False
 
 
-@stop_gradient_once.defjvp
-def _(primals: tuple[Array], tangents: tuple[Array]):
-    (x,) = primals
-    (dx,) = tangents
-    return x, zeros_like_same_unit(dx)
+# @stop_gradient_once.defjvp
+# def _(primals: tuple[Array], tangents: tuple[Array]):
+#     (x,) = primals
+#     (dx,) = tangents
+#     return x, zeros_like_same_unit(dx)
 
 
-def _aggregate_forces(g: graph_t) -> tuple[batched[force_annotation], batched[Array]]:
-
+def _forces_by_disps_(g: graph_t) -> batched[Array]:
     def inner(c: connection):
+        a = g.get_point(c.a)
+        b = g.get_point(c.b)
+
+        v = b.coords - a.coords
+        v_len = jnp.linalg.norm(v)
+
+        # > 0 : compression
+        force = cast[Array]()(-primal_to_zero(v_len) / v_len * c.force_per_deform)
+
+        return force
+
+    return g._connections.map(inner)
+
+
+def forces_by_disps(g: graph_t, displacements: batched[Array]) -> batched[Array]:
+    assert displacements.batch_dims() == g._points.batch_dims()
+
+    def forces_from_coords(coords: batched[Array]) -> batched[Array]:
+        g2 = tree_at_(lambda g: g._points.unflatten().coords, g, coords.unflatten())
+        return _forces_by_disps_(g2)
+
+    primals = g._points.map(lambda x: x.coords)
+    _primals_out_zeros, _connection_fs = jax.jvp(
+        forces_from_coords, (primals,), (displacements,)
+    )
+    return _connection_fs
+
+
+def aggregate_all_forces(
+    g: graph_t, displacements: batched[Array]
+) -> tuple[batched[Array], batched[Array]]:
+
+    by_disp = forces_by_disps(g, displacements)
+
+    def inner(c: connection, disp_force: Array):
         a = g.get_point(c.a)
         b = g.get_point(c.b)
 
@@ -51,57 +86,26 @@ def _aggregate_forces(g: graph_t) -> tuple[batched[force_annotation], batched[Ar
         v_len = jnp.linalg.norm(v)
         v_dir = v / v_len  # vector a->b
 
-        # deform = v_len / lax.stop_gradient(v_len) - 1
-
-        # > 0 : compression
-        force: Array = -primal_to_zero(v_len) / v_len * c.force_per_deform
-
-        weight = c.weight + c.density * stop_gradient_once(v_len)
-
+        weight = c.weight + c.density * v_len
         half_w = jnp.array([0, 0, weight]) / 2
 
-        ans1 = batched.create(force_annotation(c.a, -force * v_dir - half_w))
-        ans2 = batched.create(force_annotation(c.b, force * v_dir - half_w))
+        disp_force = quantity(disp_force).m_arr * quantity(weight).u
 
-        return batched.stack([ans1, ans2]), force
+        ans1 = batched.create(force_annotation(c.a, -disp_force * v_dir - half_w))
+        ans2 = batched.create(force_annotation(c.b, disp_force * v_dir - half_w))
 
-    annos, connection_forces = g._connections.map(inner).split_tuple()
+        return batched.stack([ans1, ans2]), disp_force
 
-    return annos.unflatten().reshape(-1), connection_forces
+    annos, by_disp = batched_zip(g._connections, by_disp).tuple_map(inner).split_tuple()
+    g = g.add_external_force_batched(annos.uf)
+    aggr = g.sum_annotations()
 
-
-def forces_from_tangents(
-    g: graph_t, displacements: batched[Array]
-) -> tuple[batched[Array], batched[Array]]:
-
-    assert displacements.batch_dims() == g._points.batch_dims()
-    assert displacements.item_shape().shape == (3,)
-
-    def forces_from_coords(
-        coords: batched[Array],
-    ) -> tuple[batched[Array], batched[Array]]:
-        g2 = tree_at_(lambda g: g._points.unflatten().coords, g, coords.unflatten())
-
-        annos, connection_fs = _aggregate_forces(g2)
-
-        g2 = g2.add_external_force_batched(annos)
-
-        aggr = g2.sum_annotations()
-
-        return aggr, connection_fs
-
-    primals = g._points.map(lambda x: x.coords)
-    (primals_out, _), (tangents_out, connection_fs) = jax.jvp(
-        forces_from_coords, (primals,), (displacements,)
-    )
-
-    return (
-        batched_vmap(lambda x, y: x + y, primals_out, tangents_out),
-        connection_fs,
-    )
+    return aggr, by_disp
 
 
 class solve_forces_r[T](eqx.Module):
+    flstsq_out: flstsq_r[tuple[batched[Array], T], batched[Array]]
+
     graph_args: T
     graph: graph_t
 
@@ -118,10 +122,11 @@ def solve_forces[T](
 ) -> solve_forces_r[T]:
 
     def get_equations(solve_vars: tuple[batched[Array], T]):
-        tangents, arg = solve_vars
+        disps, arg = solve_vars
         graph = graph_fn(arg)
-        tangents = tangents.map(lambda x: x * areg.m)
-        equations, connection_forces = forces_from_tangents(graph, tangents)
+        equations, connection_forces = aggregate_all_forces(
+            graph, disps.map(lambda x: x * areg.eps_disp)
+        )
         return equations, graph, connection_forces
 
     f_args = (
@@ -138,6 +143,7 @@ def solve_forces[T](
     point_displacements, graph_args = ans.x
 
     return solve_forces_r(
+        flstsq_out=ans,
         graph_args=graph_args,
         graph=graph,
         point_displacements=point_displacements,

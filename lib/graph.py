@@ -40,6 +40,10 @@ class pointid(eqx.Module):
 
     __repr__ = pformat_repr
 
+    @staticmethod
+    def ex():
+        return pointid(jnp.array(0))
+
 
 class connection(eqx.Module):
     a: pointid
@@ -47,6 +51,9 @@ class connection(eqx.Module):
     force_per_deform: ArrayLike = 0.0
     weight: ArrayLike = 0.0
     density: ArrayLike = 0.0
+
+    def get_weight(self, l: Array):
+        return l * self.density + self.weight
 
     __repr__ = pformat_repr
 
@@ -72,12 +79,14 @@ class graph_t(eqx.Module):
         ).format()
 
     @staticmethod
-    def create(dim: int) -> graph_t:
-        _id = pointid(jnp.array(0))
+    def create(dim: int, *, connection_ex: connection | None = None) -> graph_t:
+        _id = pointid.ex()
+        if connection_ex is None:
+            connection_ex = connection(_id, _id)
         return graph_t(
             dim=dim,
             _points=batched.create(point(jnp.zeros(dim), False, False)).repeat(0),
-            _connections=batched.create(connection(_id, _id)).repeat(0),
+            _connections=batched.create(connection_ex).repeat(0),
             _external_forces=batched.create(
                 force_annotation(_id, jnp.zeros(dim))
             ).repeat(0),
@@ -126,27 +135,27 @@ class graph_t(eqx.Module):
         ans_pids = batched.create(pointid(idxs), (count,)).reshape(*dims)
         return tree_at_(lambda me: me._points, self, new_points), ans_pids
 
-    def add_connection(
-        self, p1: pointid, p2: pointid, unbatch_dims: tuple[int, ...] = ()
-    ) -> graph_t:
-        return self._add_connection(connection(p1, p2), unbatch_dims)
+    # def add_connection(
+    #     self, p1: pointid, p2: pointid
+    # ) -> graph_t:
+    #     return self._add_connection(connection(p1, p2))
 
-    def _add_connection(
+    def add_connection_unbatched(
         self, c: connection, unbatch_dims: tuple[int, ...] = ()
     ) -> graph_t:
-        return self._add_connection_batched(batched.create_unbatch(c, unbatch_dims))
+        return self.add_connection_batched(batched.create_unbatch(c, unbatch_dims))
 
-    def _add_connection_batched(self, cs: batched[connection]) -> graph_t:
+    def add_connection_batched(self, cs: batched[connection]) -> graph_t:
         return tree_at_(
             lambda me: me._connections,
             self,
             batched.concat([self._connections, cs.reshape(-1)]),
         )
 
-    def add_connection_batched(
-        self, p1: batched[pointid], p2: batched[pointid]
-    ) -> graph_t:
-        return self._add_connection_batched(batched_zip(p1, p2).tuple_map(connection))
+    # def add_connection_batched(
+    #     self, p1: batched[pointid], p2: batched[pointid]
+    # ) -> graph_t:
+    #     return self._add_connection_batched(batched_zip(p1, p2).tuple_map(connection))
 
     def get_point(self, pid: pointid) -> point:
         return self._points[pid._idx].unwrap()
