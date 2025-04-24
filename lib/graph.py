@@ -49,6 +49,8 @@ class connection(eqx.Module):
     a: pointid
     b: pointid
     force_per_deform: ArrayLike = 0.0
+    tension_only: blike = False
+    compression_only: blike = False
     weight: ArrayLike = 0.0
     density: ArrayLike = 0.0
 
@@ -166,24 +168,24 @@ class graph_t(eqx.Module):
         )
         return tree_at_(lambda me: me._points, self, ans)
 
-    def get_lines(self) -> Array:
-        # return accepted by Line3DCollection after tolist
-        # which wants
-        # list[tuple[list[float], list[float]]]
+    # def get_lines(self) -> Array:
+    #     # return accepted by Line3DCollection after tolist
+    #     # which wants
+    #     # list[tuple[list[float], list[float]]]
 
-        def inner(c: connection):
-            p1 = self.get_point(c.a).coords
-            p2 = self.get_point(c.b).coords
-            return jnp.stack([p1, p2])
+    #     def inner(c: connection):
+    #         p1 = self.get_point(c.a).coords
+    #         p2 = self.get_point(c.b).coords
+    #         return jnp.stack([p1, p2])
 
-        return self._connections.map(inner).unflatten()
+    #     return self._connections.map(inner).unflatten()
 
     def sum_annotations(self) -> batched[Array]:
         n = len(self._points)
 
         anno_buf = self._external_forces.unflatten()
 
-        buf = jnp.zeros_like(self._points.uf.coords)
+        buf = jnp.zeros_like(self._points.get_arr(lambda x: x.coords))
 
         return batched.create(buf.at[anno_buf.p._idx].add(anno_buf.f), batch_dims=(n,))
 

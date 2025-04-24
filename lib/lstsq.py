@@ -21,7 +21,8 @@ class flstsq_r[T, R](eqx.Module):
     x_flat: Array
     x: T
     errors: R
-    residuals: Array
+    total_error: Array
+    linear_residuals: Array
     rank: Array
     singular_values: Array
 
@@ -55,6 +56,8 @@ def flstsq[T, R](f: Callable[[T], R], arg_start: T, n_iters: int = 1) -> flstsq_
         ans_tree, ans_flat = flatten_handler.create(ans)
         return ans_flat
 
+    f_flat = fn_as_traced(f_flat)(arg_start_flat)
+
     def solve_once(cur_arg: Array):
 
         mat_from_cur, const_from_cur = _jac(f_flat, cur_arg)
@@ -64,11 +67,28 @@ def flstsq[T, R](f: Callable[[T], R], arg_start: T, n_iters: int = 1) -> flstsq_
 
         mat, const = _jac(linearized_fn, arg_start_flat)
 
-        delta_arg, resid, rank, singular_values = lstsq(mat, -const, rcond=None)
-        debug_print("flstsq: residuals=", resid, "rank=", rank)
+        delta_arg, resid, rank, singular_values = lstsq(
+            mat,
+            -const,
+            # rcond=0.01,
+            rcond=None,
+        )
 
         ans = arg_start_flat + delta_arg
-        errors = mat @ delta_arg + const
+        errors = f_flat(ans)
+        total_error = jnp.sum(jnp.square(errors))
+
+        debug_print(
+            "flstsq:",
+            "linear_residuals=",
+            resid,
+            "rank=",
+            rank,
+            "total_error=",
+            total_error,
+            # "mid_z_offset_a=",
+            # arg_tree.unflatten(ans)[1]["mid_z_offset_a"],
+        )
 
         return flstsq_r(
             mat_flat=mat,
@@ -77,25 +97,29 @@ def flstsq[T, R](f: Callable[[T], R], arg_start: T, n_iters: int = 1) -> flstsq_
             x_flat=ans,
             x=arg_tree.unflatten(ans),
             errors=ans_tree.unflatten(errors),
-            residuals=resid,
+            total_error=total_error,
+            linear_residuals=resid,
             rank=rank,
             singular_values=singular_values,
         )
 
-    if n_iters > 0:
-        solve_once = fn_as_traced(solve_once)(arg_start_flat)
+    solve_once = fn_as_traced(solve_once)(arg_start_flat)
 
     ans = solve_once(arg_start_flat)
 
-    for _ in range(n_iters - 1):
-        ans = solve_once(ans.x_flat)
+    if n_iters > 1:
+        _, ans = lax.while_loop(
+            lambda i_s: (i_s[0] < n_iters - 1) & (i_s[1].total_error != 0.0),
+            lambda i_s: (i_s[0] + 1, solve_once(i_s[1].x_flat)),
+            (jnp.array(0), ans),
+        )
 
     return ans
 
 
 def flstsq_checked[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
     ans = flstsq(f, arg_example)
-    check(jnp.all(ans.residuals < 10 ** (-5)), "flstsq_checked")
+    check(jnp.all(ans.linear_residuals < 10 ** (-5)), "flstsq_checked")
     return ans
 
 

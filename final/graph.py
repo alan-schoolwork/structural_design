@@ -50,173 +50,148 @@ def build_graph() -> graph_t:
             pointid.ex(),
             force_per_deform=0.0 * force_per_deform_c,
             weight=0.0 * weight_c,
-            density=0.0 * weight_c / areg.m,
+            density=0.0 * weight_c / areg.ft,
         ),
     )
 
-    outer_r = 30.0 * areg.m
-    inner_r = 5.0 * areg.m
-    n_angle = 30
+    outer_r = 110.0 * areg.ft
+    inner_r = 10.0 * areg.ft
 
-    n = 10
-    # n = 3
-    # n = 4
+    n_sectors = 10
+    n_angle_per_sector = 4
+    n_angle = n_sectors * n_angle_per_sector
 
-    x_pos = oryx_var("x_pos", tag_pos, jnp.linspace(inner_r, outer_r, n)[1:-1])
-    x_pos = concatenate([[inner_r], x_pos, [outer_r]])
+    n = 12 + 1
 
-    z_pos_defaults = jnp.linspace(-1.0, 0.0, n)
-    z_max = 5 * areg.m
+    x_pos = jnp.linspace(outer_r, inner_r, n)
+    angles = jnp.linspace(0, 2 * math.pi, n_angle + 1)[:-1]
 
-    # z_pos_defaults = jnp.linspace(0.2, 1.0, n) ** 2
-    # z_max = 5 * areg.m
-
-    # z_pos_defaults = jax.vmap(lambda x: ((x - 1) / 2 + 1 - 1 / x / 10))(
-    #     jnp.linspace(0.2, 1.0, n)
+    # mid_z_offset_a = oryx_var(
+    #     "mid_z_offset_a", tag_external_force, 4.0, store_scale=1.0
     # )
-    # z_max = 10 * areg.m
+    mid_z_offset_a = 3.9
 
-    # z_pos_defaults = jax.vmap(lambda x: (1 - 1 / x / 10))(jnp.linspace(0.2, 1.0, n))
-    # z_max = 10 * areg.m
+    z_offset_by_x = jnp.linspace(0.0, -5, n) * areg.m
+    z_factor_x = jnp.linspace(1.0, 0.1, n)
+    z_offset_by_a = jnp.array([0.0, 3.0, mid_z_offset_a, 3.0] * n_sectors) * areg.m
 
-    z_pos_defaults -= z_pos_defaults[0]
-    z_pos_defaults /= z_pos_defaults[-1]
-    z_pos_defaults *= z_max
-
-    z_pos = oryx_var("z_pos", tag_pos, z_pos_defaults[:-1])
-    z_pos = concatenate([z_pos, z_pos_defaults[-1:]])
-
-    angles = batched.create(jnp.linspace(0, 2 * math.pi, n_angle + 1)[:-1], (n_angle,))
-
-    def per_angle(a: fval, unbatch_dims: tuple[int, ...]) -> batched[pointid]:
-        nonlocal g
-
-        def add_point(x: fval, z: fval, unbatch_dims2: tuple[int, ...]) -> pointid:
-            nonlocal g
-            choord = jnp.array([x * jnp.cos(a), x * jnp.sin(a), z])
-            g, ans = g.add_point(choord, (*unbatch_dims, *unbatch_dims2))
-            return ans
-
-        def add_connection(c: connection, unbatch_dims2: tuple[int, ...]):
-            nonlocal g
-            g = g.add_connection_unbatched(c, (*unbatch_dims, *unbatch_dims2))
-
-        top_row = batched.create((x_pos, z_pos), (n,)).tuple_map(
-            lambda x, z: add_point(x, z, (n,))
-        )
-        bot_row = batched.create(
-            (
-                (x_pos[1:] + x_pos[:-1]) / 2,
-                (z_pos[1:] + z_pos[:-1]) / 2 - 1.0 * areg.m,
+    point_coords = (
+        batched.create((x_pos, z_offset_by_x, z_factor_x), (n,))
+        .tuple_map(
+            lambda x, z1, zf: batched.create(
+                (angles, z_offset_by_a), (n_angle,)
+            ).tuple_map(
+                lambda a, z2: jnp.array([x * jnp.cos(a), x * jnp.sin(a), z1 + z2 * zf]),
             ),
-            (n - 1,),
-        ).tuple_map(lambda x, z: add_point(x, z, (n - 1,)))
-
-        cs = batched.concat(
-            [
-                batched_zip(top_row[1:], top_row[:-1]).tuple_map(
-                    lambda a, b: (a, b, 1.0)
-                ),
-                #
-                batched_zip(bot_row[1:], bot_row[:-1]).tuple_map(
-                    lambda a, b: (a, b, 1.0)
-                    # lambda a, b: (a, b, 0.1)
-                ),
-                #
-                batched_zip(top_row[1:], bot_row).tuple_map(
-                    lambda a, b: (a, b, 1.0),
-                    # lambda a, b: (a, b, 0.0),
-                ),
-                batched_zip(top_row[:-1], bot_row).tuple_map(
-                    lambda a, b: (a, b, 1.0),
-                    # lambda a, b: (a, b, 0.0),
-                ),
-            ]
         )
-        cs.tuple_map(
-            lambda a, b, fpd: add_connection(
-                connection(
+        .uf
+    )
+    # point_coords = batched.create(
+    #     oryx_var("all_points", tag_external_force, point_coords.arr, store_scale=100.0),
+    #     point_coords.batch_dims(),
+    # )
+    g, points = g.add_point_batched(point_coords)
+    assert points.batch_dims() == (n, n_angle)
+
+    # x connections
+    g = g.add_connection_batched(
+        points.transpose()
+        .enumerate1d(
+            lambda i, p: batched_zip(p[1:], p[:-1]).tuple_map(
+                lambda a, b: connection(
                     a,
                     b,
-                    force_per_deform=fpd * force_per_deform_c,
+                    force_per_deform=lax.select(
+                        i % n_angle_per_sector == 0,
+                        on_true=5.0 * force_per_deform_c,
+                        on_false=1.0 * force_per_deform_c,
+                    ),
                     density=0.0 * weight_c / areg.m,
-                ),
-                (len(cs),),
+                )
+            )
+        )
+        .uf
+    )
+
+    # ring connections
+    g = g.add_connection_batched(
+        points.map1d(
+            lambda p: batched_zip(p, p.roll(1)).tuple_map(
+                lambda a, b: connection(
+                    a,
+                    b,
+                    force_per_deform=1.0 * force_per_deform_c,
+                    density=1.0 * weight_c / areg.m,
+                )
+            )
+        ).uf
+    )
+
+    # test?
+    g = g.add_connection_batched(
+        batched.arange(n - 1)
+        .map(
+            lambda x_idx: batched.concat(
+                [
+                    batched_zip(points[x_idx], points[x_idx + 1].roll(1)),
+                    batched_zip(points[x_idx], points[x_idx + 1].roll(-1)),
+                ]
+            ).tuple_map(
+                lambda a, b: connection(
+                    a,
+                    b,
+                    force_per_deform=1.0 * force_per_deform_c,
+                    density=0.0 * weight_c / areg.m,
+                    # compression_only=True,
+                )
+            )
+        )
+        .uf
+    )
+
+    main_lines = points.reshape(
+        n,
+        n_sectors,
+        n_angle_per_sector,
+    )[:, :, 0]
+    assert main_lines.batch_dims() == (n, n_sectors)
+
+    # ring connections on main_lines
+    g = g.add_connection_batched(
+        main_lines.enumerate1d(
+            lambda i, p: batched_zip(p, p.roll(1)).tuple_map(
+                lambda a, b: connection(
+                    a,
+                    b,
+                    force_per_deform=5.0 * force_per_deform_c,
+                    density=0.0 * weight_c / areg.m,
+                    tension_only=(i != 0),
+                )
+            )
+        ).uf
+    )
+
+    outer_ring = points[0]
+    support_points = outer_ring.reshape(n_sectors, -1)[:, 0]
+    assert support_points.batch_dims() == (n_sectors,)
+
+    support_points = points[0]
+
+    # print("support_points", support_points)
+    # assert False
+
+    outer_support_z = oryx_var(
+        "outer_support_z", tag_external_force, jnp.zeros(len(support_points)) * weight_c
+    )
+    g = g.add_external_force_batched(
+        batched_zip(
+            support_points, batched.create(outer_support_z, (len(outer_support_z),))
+        ).tuple_map(
+            lambda p, f: force_annotation(
+                p,
+                jnp.array([0.0, 0.0, f]),
             ),
         )
-        return batched.concat([top_row, bot_row])
-
-    all_points = angles.map(lambda a: per_angle(a, (len(angles),))).uf
-    assert all_points.batch_dims() == (n_angle, (2 * n - 1))
-
-    # test_area = oryx_var(
-    #     "test_area", tag_external_force, 0.2 * force_per_deform_c, store_scale=10000
-    # )
-
-    # ring_connection_areas = oryx_var(
-    #     "ring_connection_areas",
-    #     tag_area,
-    #     jnp.ones(2 * n - 1),
-    # )
-    ring_connections = vmap(
-        # (all_points[:, jnp.array([0, n - 1])].transpose([1, 0]),),
-        (all_points.transpose([1, 0]), jnp.arange(all_points.batch_dims()[1])),
-        lambda ring, i: batched_zip(ring, ring.roll(1)).tuple_map(
-            lambda x, y: connection(
-                x,
-                y,
-                # force_per_deform=1.0 * force_per_deform_c,
-                force_per_deform=tree_select(
-                    (i == n - 1) | (i == 0),
-                    on_true=5.0 * force_per_deform_c,
-                    # on_false=0.0 * force_per_deform_c,
-                    # on_false=0.2 * force_per_deform_c,
-                    on_false=0.5 * force_per_deform_c,
-                    # on_false=1.0 * force_per_deform_c,
-                ),
-                # weight=area * weight_c,
-                density=1.0 * weight_c / areg.m,
-            )
-        ),
     )
-    g = g.add_connection_batched(ring_connections)
-
-    outer_support_z = oryx_var("outer_support_z", tag_external_force, 0.0 * weight_c)
-    outer_support_x = oryx_var(
-        "outer_support_x", tag_external_force, 0.0 * weight_c, store_scale=1000.0
-    )
-    outer_ring = all_points[:, n - 1]
-    # outer_ring = all_points[:, n - 2]
-    # outer_ring = points[:, -3]
-    # outer_ring = points[:, 0]
-
-    g = g.add_external_force_batched(
-        batched_zip(outer_ring, angles).enumerate(
-            lambda p_a, i: force_annotation(
-                # p, jnp.array([0.0, 0.0, tree_select(i % 2 == 0, outer_support_z, 0.0)])
-                p_a[0],
-                jnp.array(
-                    [
-                        outer_support_x * jnp.cos(p_a[1]),
-                        outer_support_x * jnp.sin(p_a[1]),
-                        outer_support_z,
-                    ]
-                ),
-            )
-        )
-    )
-
-    # inner_ring = all_points[:, 0]
-    # inner_support_z = oryx_var(
-    #     "inner_support_z",
-    #     tag_external_force,
-    #     0.0 * weight_c,
-    #     # store_scale=5000.0,
-    # )
-    # g = g.add_external_force_batched(
-    #     inner_ring.enumerate(
-    #         lambda p, i: force_annotation(p, jnp.array([0.0, 0.0, inner_support_z]))
-    #     )
-    # )
 
     return g

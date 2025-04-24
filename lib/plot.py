@@ -124,10 +124,19 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
         width = jnp.abs(x) / f_max * 10 + 0.2
         return color, width
 
-    colors, linewidths = forces.map(color_width_from_force).uf
-
+    lines, (colors, linewidths) = (
+        batched_zip(g._connections, forces)
+        .filter_concrete(lambda c_f: c_f[1] != 0.0)
+        .tuple_map(
+            lambda c, f: (
+                jnp.stack([g.get_point(c.a).coords, g.get_point(c.b).coords]),
+                color_width_from_force(f),
+            )
+        )
+        .unflatten()
+    )
     line_collection = Line3DCollection(
-        (g.get_lines() / areg.m).tolist(),
+        (lines / areg.m).tolist(),
         colors=colors.tolist(),
         linewidths=linewidths.tolist(),
         # zorder=1,
@@ -137,7 +146,7 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
     def _plot_external_fs(x: point, f: Array):
         cd = x.coords / areg.m
         f_n = jnp.linalg.norm(f)
-        cd_other = cd - f / f_max * 100.0
+        cd_other = cd - f / f_max * 10.0
         return jnp.stack([cd_other, cd]), color_width_from_force(f_n), cd_other
 
     points_external_fs, _count = batched_zip(g._points, g.sum_annotations()).filter(
@@ -148,7 +157,7 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
         (external_fs_colors, external_fs_linwidths),
         external_fs_points,
     ) = (
-        points_external_fs[: int(_count)].tuple_map(_plot_external_fs).uf
+        points_external_fs[: int(_count)].tuple_map(_plot_external_fs).unflatten()
     )
     ax.add_collection3d(
         Line3DCollection(

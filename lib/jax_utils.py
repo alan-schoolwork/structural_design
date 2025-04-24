@@ -184,15 +184,3 @@ def oryx_unzip[R](fn: Callable[[], R], tag: str) -> tuple[
         return oryx.core.plant(fn, tag=tag)(plants=updated_vals)
 
     return default_vals, fn_as_traced(inner)(default_vals)
-
-
-@jax.custom_jvp
-def primal_to_zero(x: Array):
-    return zeros_like_same_unit(x)
-
-
-@primal_to_zero.defjvp
-def _(primals: tuple[Array], tangents: tuple[Array]):
-    (x,) = primals
-    (dx,) = tangents
-    return primal_to_zero(x), dx

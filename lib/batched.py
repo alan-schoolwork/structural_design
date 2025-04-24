@@ -9,9 +9,12 @@ from typing import (
     Any,
     Callable,
     Concatenate,
+    Generic,
     Never,
     Protocol,
+    TypeVar,
     TypeVarTuple,
+    final,
     overload,
 )
 
@@ -38,6 +41,7 @@ from .utils import (
     shape_of,
     tree_at_,
     unreachable,
+    vmap,
     wraps,
 )
 
@@ -82,7 +86,10 @@ def _batched_treemap_of_one[**P](
     return inner
 
 
-class batched[T_co](eqx.Module):
+T_co = TypeVar("T_co", covariant=True)
+
+
+class batched(eqx.Module, Generic[T_co]):
     _bufs: list[Array]
     _shapes: list[ShapeDtypeStruct] = eqx.field(static=True)
     _pytree: jtu.PyTreeDef = eqx.field(static=True)
@@ -113,6 +120,9 @@ class batched[T_co](eqx.Module):
             return batched(_bufs, _shapes, tree)
         except Exception as e:
             raise Exception(f"failed to create batched: {batch_dims}\n{val}") from e
+
+    def __check_co(self) -> batched[object]:  # pyright: ignore[reportUnusedFunction]
+        return self
 
     def batch_dims(self) -> tuple[int, ...]:
         if self._tracking is not None:
@@ -155,8 +165,15 @@ class batched[T_co](eqx.Module):
         return jtu.tree_unflatten(self._pytree, self._bufs)
 
     @property
-    def uf(self):
+    def uf[T2: batched[object]](self: batched[T2]) -> T2:
         return self.unflatten()
+
+    @property
+    def arr(self: batched[ArrayLike]) -> Array:
+        return jnp.array(self.unflatten())
+
+    def get_arr(self, f: Callable[[T_co], ArrayLike]) -> Array:
+        return batched_vmap(f, self).arr
 
     def unwrap(self) -> T_co:
         assert self.batch_dims() == ()
@@ -219,8 +236,8 @@ class batched[T_co](eqx.Module):
     def map[T2](self, f: Callable[[T_co], T2]) -> batched[T2]:
         return batched_vmap(f, self)
 
-    def map1d[T2](self, f: Callable[[batched[T_co]], batched[T2]]) -> batched[T2]:
-        return jax.vmap(f)(self)
+    def map1d[T2](self, f: Callable[[batched[T_co]], T2]) -> batched[T2]:
+        return vmap((self,), lambda me: batched.create(f(me)))
 
     def tuple_map[*T1, T2](
         self: batched[tuple[*T1]], f: Callable[[*T1], T2]
@@ -245,6 +262,10 @@ class batched[T_co](eqx.Module):
 
     def filter(self, f: Callable[[T_co], blike]) -> tuple[batched[T_co], ival]:
         return self.filter_arr(self.map(f))
+
+    def filter_concrete(self, f: Callable[[T_co], blike]) -> batched[T_co]:
+        ans, ct = self.filter(f)
+        return ans[: int(ct)]
 
     def filter_arr(self, bools_: batched[blike]) -> tuple[batched[T_co], ival]:
         (n,) = self.batch_dims()
@@ -290,6 +311,10 @@ class batched[T_co](eqx.Module):
 
         return jax.vmap(inner)(batched.arange(n), self)
 
+    def enumerate1d[R](self, f: Callable[[ival, batched[T_co]], R]) -> batched[R]:
+        (n, *_) = self.batch_dims()
+        return vmap((jnp.arange(n), self), lambda i, me: batched.create(f(i, me)))
+
     def enumerate[R](
         self,
         f: (
@@ -328,7 +353,7 @@ class batched[T_co](eqx.Module):
             return ans
 
         keys = self.map(inner)
-        sorted_indices = jnp.argsort(keys.uf)
+        sorted_indices = jnp.argsort(keys.arr)
         return self[sorted_indices]
 
     @property

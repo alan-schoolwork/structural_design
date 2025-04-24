@@ -14,7 +14,7 @@ from pintax.unstable import pint_registry
 
 from .batched import batched, batched_vmap, batched_zip
 from .graph import connection, force_annotation, graph_t
-from .jax_utils import debug_print, fn_as_traced, primal_to_zero
+from .jax_utils import debug_print, fn_as_traced
 from .lstsq import flstsq, flstsq_r
 from .utils import (
     allow_autoreload,
@@ -76,7 +76,7 @@ def solve_forces[T](
         connection_forces_var, arg = solve_vars
         graph = graph_fn(arg)
         connection_forces = connection_forces_var.map(
-            lambda x: x * quantity(graph._connections.uf.weight).u
+            lambda x: x * quantity(graph._connections.get_arr(lambda me: me.weight)).u
         )
         equations = aggregate_all_forces(graph, connection_forces)
         return equations, graph, connection_forces
@@ -88,7 +88,7 @@ def solve_forces[T](
 
     ans = flstsq(lambda x: get_equations(x)[0], f_args)
 
-    debug_print("solve_forces: residuals=", ans.residuals)
+    debug_print("solve_forces: residuals=", ans.linear_residuals)
 
     _, graph, connection_forces = get_equations(ans.x)
 

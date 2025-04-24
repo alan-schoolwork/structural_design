@@ -35,7 +35,7 @@ fval = Float[Array, ""]
 ival = Int[Array, ""]
 bval = Bool[Array, ""]
 
-blike = Bool[Array, ""] | bool
+blike = Bool[ArrayLike, ""]
 
 flike = Float[ArrayLike, ""]
 
@@ -72,7 +72,9 @@ def cast_unchecked_(x):
     return cast_unchecked()(x)
 
 
-def cast_fsig[**P, R](f1: Callable[P, Any]):
+def cast_fsig[**P, R](
+    f1: Callable[P, Any],
+) -> Callable[[Callable[..., R]], Callable[P, R]]:
     def inner(f2: Callable[..., R]) -> Callable[P, R]:
         return f2
 
@@ -348,3 +350,7 @@ def tree_select[T](
         for x, y in zip(bufs_true, bufs_false)
     ]
     return jtu.tree_unflatten(tree1, out_bufs)
+
+
+def cond_[T](pre: blike, true_fun: Callable[[], T], false_fun: Callable[[], T]) -> T:
+    return lax.cond(pre, true_fun=true_fun, false_fun=false_fun)

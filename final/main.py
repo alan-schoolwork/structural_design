@@ -62,9 +62,9 @@ def main():
             f_max=1000.0 * areg.weight_c,
         )
     )
-    # plt.show()
-    plt.tight_layout()
-    plt.savefig("flower_rings.png", dpi=300)
-    plt.close()
+    plt.show()
+    # plt.tight_layout()
+    # plt.savefig("output.png", dpi=300)
+    # plt.close()
 
     return ans
