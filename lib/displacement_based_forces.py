@@ -30,18 +30,6 @@ from .utils import (
 pint_registry().define("eps_disp=[eps_disp]")
 
 
-# @jax.custom_jvp
-# def stop_gradient_once(x: Array) -> Array:
-#     assert False
-
-
-# @stop_gradient_once.defjvp
-# def _(primals: tuple[Array], tangents: tuple[Array]):
-#     (x,) = primals
-#     (dx,) = tangents
-#     return x, zeros_like_same_unit(dx)
-
-
 def _forces_by_disps_(g: graph_t) -> batched[Array]:
     def inner(c: connection):
         a = g.get_point(c.a)
@@ -134,9 +122,9 @@ def solve_forces[T](
         arg_ex,
     )
 
-    ans = flstsq(lambda x: get_equations(x)[0], f_args)
+    ans = flstsq(lambda x: get_equations(x)[0], f_args, n_iters=1)
 
-    debug_print("solve_forces: residuals=", ans.residuals)
+    # debug_print("solve_forces: residuals=", ans.residuals)
 
     _, graph, connection_forces = get_equations(ans.x)
 

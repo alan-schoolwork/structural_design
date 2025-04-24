@@ -162,11 +162,14 @@ def debug_print(*args, **kwargs):
     debug_callback(print, *args, **kwargs)
 
 
-def oryx_var(name: str, tag: str, default_val: ArrayLike) -> Array:
+def oryx_var(
+    name: str, tag: str, default_val: ArrayLike, store_scale: ArrayLike = 1.0
+) -> Array:
     default = quantity(default_val)
+    store_scale = jnp.array(store_scale)
 
-    ans = oryx.core.sow(jnp.array(default.m), name=name, tag=tag)
-    return jnp.array(ans) * default.u
+    ans = oryx.core.sow(jnp.array(default.m) * store_scale, name=name, tag=tag)
+    return jnp.array(ans) * default.u / store_scale
 
 
 def oryx_unzip[R](fn: Callable[[], R], tag: str) -> tuple[

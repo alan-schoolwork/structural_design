@@ -28,7 +28,7 @@ from pintax import areg, unitify, ureg
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
-jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_debug_infs", True)
 
 np.set_printoptions(precision=3, suppress=True)
@@ -45,24 +45,26 @@ def main():
 
     graph_ex = graph_fn()
 
-    external_force, graph_fn = oryx_unzip(graph_fn, tag=tag_external_force)
+    extra_vars, graph_fn = oryx_unzip(graph_fn, tag=tag_external_force)
 
     from lib.displacement_based_forces import solve_forces
 
     # from lib.simple_solve import solve_forces
 
-    ans = solve_forces(graph_fn, graph_ex, external_force)
+    ans = solve_forces(graph_fn, graph_ex, extra_vars)
+
+    # ans = jit(solve_forces)(graph_fn, graph_ex, extra_vars)
 
     plot_graph_forces(
         plot_graph_args(
             graph=ans.graph,
             connection_forces=ans.connection_forces,
-            # f_max=1000.0 * areg.weight_c,
+            f_max=1000.0 * areg.weight_c,
         )
     )
-    plt.show()
-    # plt.tight_layout()
-    # plt.savefig("structure.png", dpi=300)
-    # plt.close()
+    # plt.show()
+    plt.tight_layout()
+    plt.savefig("flower_rings.png", dpi=300)
+    plt.close()
 
     return ans

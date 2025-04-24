@@ -65,16 +65,19 @@ def build_graph() -> graph_t:
     x_pos = oryx_var("x_pos", tag_pos, jnp.linspace(inner_r, outer_r, n)[1:-1])
     x_pos = concatenate([[inner_r], x_pos, [outer_r]])
 
-    # z_pos_defaults = jnp.linspace(-1.0, 0.0, n)
-    # z_max = 5 * areg.m
+    z_pos_defaults = jnp.linspace(-1.0, 0.0, n)
+    z_max = 5 * areg.m
 
     # z_pos_defaults = jnp.linspace(0.2, 1.0, n) ** 2
     # z_max = 5 * areg.m
 
-    z_pos_defaults = jax.vmap(lambda x: ((x - 1) / 2 + 1 - 1 / x / 10))(
-        jnp.linspace(0.2, 1.0, n)
-    )
-    z_max = 10 * areg.m
+    # z_pos_defaults = jax.vmap(lambda x: ((x - 1) / 2 + 1 - 1 / x / 10))(
+    #     jnp.linspace(0.2, 1.0, n)
+    # )
+    # z_max = 10 * areg.m
+
+    # z_pos_defaults = jax.vmap(lambda x: (1 - 1 / x / 10))(jnp.linspace(0.2, 1.0, n))
+    # z_max = 10 * areg.m
 
     z_pos_defaults -= z_pos_defaults[0]
     z_pos_defaults /= z_pos_defaults[-1]
@@ -111,18 +114,31 @@ def build_graph() -> graph_t:
 
         cs = batched.concat(
             [
-                batched_zip(top_row[1:], bot_row),
-                batched_zip(top_row[:-1], bot_row),
-                batched_zip(top_row[1:], top_row[:-1]),
-                batched_zip(bot_row[1:], bot_row[:-1]),
+                batched_zip(top_row[1:], top_row[:-1]).tuple_map(
+                    lambda a, b: (a, b, 1.0)
+                ),
+                #
+                batched_zip(bot_row[1:], bot_row[:-1]).tuple_map(
+                    lambda a, b: (a, b, 1.0)
+                    # lambda a, b: (a, b, 0.1)
+                ),
+                #
+                batched_zip(top_row[1:], bot_row).tuple_map(
+                    lambda a, b: (a, b, 1.0),
+                    # lambda a, b: (a, b, 0.0),
+                ),
+                batched_zip(top_row[:-1], bot_row).tuple_map(
+                    lambda a, b: (a, b, 1.0),
+                    # lambda a, b: (a, b, 0.0),
+                ),
             ]
         )
         cs.tuple_map(
-            lambda a, b: add_connection(
+            lambda a, b, fpd: add_connection(
                 connection(
                     a,
                     b,
-                    force_per_deform=1.0 * force_per_deform_c,
+                    force_per_deform=fpd * force_per_deform_c,
                     density=0.0 * weight_c / areg.m,
                 ),
                 (len(cs),),
@@ -132,6 +148,10 @@ def build_graph() -> graph_t:
 
     all_points = angles.map(lambda a: per_angle(a, (len(angles),))).uf
     assert all_points.batch_dims() == (n_angle, (2 * n - 1))
+
+    # test_area = oryx_var(
+    #     "test_area", tag_external_force, 0.2 * force_per_deform_c, store_scale=10000
+    # )
 
     # ring_connection_areas = oryx_var(
     #     "ring_connection_areas",
@@ -149,9 +169,10 @@ def build_graph() -> graph_t:
                 force_per_deform=tree_select(
                     (i == n - 1) | (i == 0),
                     on_true=5.0 * force_per_deform_c,
-                    on_false=0.2 * force_per_deform_c,
-                    # on_false=0.5 * force_per_deform_c,
                     # on_false=0.0 * force_per_deform_c,
+                    # on_false=0.2 * force_per_deform_c,
+                    on_false=0.5 * force_per_deform_c,
+                    # on_false=1.0 * force_per_deform_c,
                 ),
                 # weight=area * weight_c,
                 density=1.0 * weight_c / areg.m,
@@ -161,19 +182,41 @@ def build_graph() -> graph_t:
     g = g.add_connection_batched(ring_connections)
 
     outer_support_z = oryx_var("outer_support_z", tag_external_force, 0.0 * weight_c)
+    outer_support_x = oryx_var(
+        "outer_support_x", tag_external_force, 0.0 * weight_c, store_scale=1000.0
+    )
     outer_ring = all_points[:, n - 1]
     # outer_ring = all_points[:, n - 2]
     # outer_ring = points[:, -3]
     # outer_ring = points[:, 0]
 
     g = g.add_external_force_batched(
-        outer_ring.enumerate(
-            lambda p, i: force_annotation(
+        batched_zip(outer_ring, angles).enumerate(
+            lambda p_a, i: force_annotation(
                 # p, jnp.array([0.0, 0.0, tree_select(i % 2 == 0, outer_support_z, 0.0)])
-                p,
-                jnp.array([0.0, 0.0, outer_support_z]),
+                p_a[0],
+                jnp.array(
+                    [
+                        outer_support_x * jnp.cos(p_a[1]),
+                        outer_support_x * jnp.sin(p_a[1]),
+                        outer_support_z,
+                    ]
+                ),
             )
         )
     )
+
+    # inner_ring = all_points[:, 0]
+    # inner_support_z = oryx_var(
+    #     "inner_support_z",
+    #     tag_external_force,
+    #     0.0 * weight_c,
+    #     # store_scale=5000.0,
+    # )
+    # g = g.add_external_force_batched(
+    #     inner_ring.enumerate(
+    #         lambda p, i: force_annotation(p, jnp.array([0.0, 0.0, inner_support_z]))
+    #     )
+    # )
 
     return g

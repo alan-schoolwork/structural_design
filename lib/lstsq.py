@@ -3,19 +3,22 @@ from typing import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import lax
 from jax import tree_util as jtu
 from jax.experimental.checkify import check
 from jaxtyping import Array
 
-from lib.jax_utils import flatten_handler
-from lib.utils import cast_unchecked, pformat_repr
 from pintax.functions import lstsq
+
+from .jax_utils import debug_print, flatten_handler, fn_as_traced
+from .utils import cast_unchecked, pformat_repr
 
 
 class flstsq_r[T, R](eqx.Module):
     const: R
     mat_flat: Array
 
+    x_flat: Array
     x: T
     errors: R
     residuals: Array
@@ -25,43 +28,69 @@ class flstsq_r[T, R](eqx.Module):
     __repr__ = pformat_repr
 
 
-def flstsq[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:
+def _jac(fn: Callable[[Array], Array], at: Array) -> tuple[Array, Array]:
+    def inner(x):
+        ans = fn(x)
+        return ans, ans
+
+    mat, const = jax.jacobian(inner, has_aux=True)(at)
+    return mat, const
+
+
+def flstsq[T, R](f: Callable[[T], R], arg_start: T, n_iters: int = 1) -> flstsq_r[T, R]:
     """
     A functional version of lstsq, returning both the
     updated input x and const as the function output at
     the original point.
     """
 
-    arg_tree, arg_flat = flatten_handler.create(arg_example)
+    arg_tree, arg_start_flat = flatten_handler.create(arg_start)
     ans_tree = cast_unchecked[flatten_handler[R]]()(None)
 
-    def inner(arg_flat: Array) -> tuple[Array, Array]:
+    def f_flat(arg_flat: Array) -> Array:
         nonlocal ans_tree
 
         arg = arg_tree.unflatten(arg_flat)
         ans = f(arg)
         ans_tree, ans_flat = flatten_handler.create(ans)
-        return ans_flat, ans_flat
+        return ans_flat
 
-    mat, const_flat = jax.jacobian(inner, has_aux=True)(arg_flat)
+    def solve_once(cur_arg: Array):
 
-    assert isinstance(mat, Array)
-    assert isinstance(const_flat, Array)
+        mat_from_cur, const_from_cur = _jac(f_flat, cur_arg)
 
-    delta_arg_flat, resid, rank, singular_values = lstsq(mat, -const_flat, rcond=None)
+        def linearized_fn(new_arg: Array) -> Array:
+            return mat_from_cur @ (new_arg - cur_arg) + const_from_cur
 
-    errors_flat = mat @ delta_arg_flat + const_flat
+        mat, const = _jac(linearized_fn, arg_start_flat)
 
-    return flstsq_r(
-        mat_flat=mat,
-        const=ans_tree.unflatten(const_flat),
-        #
-        x=arg_tree.unflatten(arg_flat + delta_arg_flat),
-        errors=ans_tree.unflatten(errors_flat),
-        residuals=resid,
-        rank=rank,
-        singular_values=singular_values,
-    )
+        delta_arg, resid, rank, singular_values = lstsq(mat, -const, rcond=None)
+        debug_print("flstsq: residuals=", resid, "rank=", rank)
+
+        ans = arg_start_flat + delta_arg
+        errors = mat @ delta_arg + const
+
+        return flstsq_r(
+            mat_flat=mat,
+            const=ans_tree.unflatten(const),
+            #
+            x_flat=ans,
+            x=arg_tree.unflatten(ans),
+            errors=ans_tree.unflatten(errors),
+            residuals=resid,
+            rank=rank,
+            singular_values=singular_values,
+        )
+
+    if n_iters > 0:
+        solve_once = fn_as_traced(solve_once)(arg_start_flat)
+
+    ans = solve_once(arg_start_flat)
+
+    for _ in range(n_iters - 1):
+        ans = solve_once(ans.x_flat)
+
+    return ans
 
 
 def flstsq_checked[T, R](f: Callable[[T], R], arg_example: T) -> flstsq_r[T, R]:

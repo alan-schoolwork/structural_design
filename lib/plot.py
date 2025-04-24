@@ -111,26 +111,63 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
     print("f_max", f_max)
     f_max = arg.f_max if arg.f_max is not None else f_max
 
-    def _color(x: fval, end: Array):
+    def _color_from_force(x: fval, _end: Array):
         x = lax.min(x / f_max * 10, 1.0)
-        return x * end + (1 - x) * jnp.array([1.0, 1.0, 1.0]) * 0.5
+        return x * _end + (1 - x) * jnp.array([1.0, 1.0, 1.0]) * 0.5
 
-    colors = forces.map(
-        lambda x: lax.select(
+    def color_width_from_force(x: fval):
+        color = lax.select(
             x > 0,
-            on_true=_color(x, jnp.array([1.0, 0.0, 0.0])),
-            on_false=_color(-x, jnp.array([0.0, 0.0, 1.0])),
+            on_true=_color_from_force(x, jnp.array([1.0, 0.0, 0.0])),
+            on_false=_color_from_force(-x, jnp.array([0.0, 0.0, 1.0])),
         )
-    )
-    linewidths = forces.map(lambda x: (jnp.abs(x) / f_max * 10 + 0.2))
+        width = jnp.abs(x) / f_max * 10 + 0.2
+        return color, width
+
+    colors, linewidths = forces.map(color_width_from_force).uf
 
     line_collection = Line3DCollection(
         (g.get_lines() / areg.m).tolist(),
-        colors=colors.unflatten().tolist(),
-        linewidths=linewidths.unflatten().tolist(),
-        zorder=1,
+        colors=colors.tolist(),
+        linewidths=linewidths.tolist(),
+        # zorder=1,
     )
     ax.add_collection3d(line_collection)
+
+    def _plot_external_fs(x: point, f: Array):
+        cd = x.coords / areg.m
+        f_n = jnp.linalg.norm(f)
+        cd_other = cd - f / f_max * 100.0
+        return jnp.stack([cd_other, cd]), color_width_from_force(f_n), cd_other
+
+    points_external_fs, _count = batched_zip(g._points, g.sum_annotations()).filter(
+        lambda p_f: jnp.linalg.norm(p_f[1]) > 0.0
+    )
+    (
+        external_fs_segs,
+        (external_fs_colors, external_fs_linwidths),
+        external_fs_points,
+    ) = (
+        points_external_fs[: int(_count)].tuple_map(_plot_external_fs).uf
+    )
+    ax.add_collection3d(
+        Line3DCollection(
+            external_fs_segs.tolist(),
+            colors=external_fs_colors.tolist(),
+            linewidths=external_fs_linwidths.tolist(),
+        )
+    )
+    ax.scatter(
+        external_fs_points[:, 0].tolist(),
+        external_fs_points[:, 1].tolist(),
+        external_fs_points[:, 2].tolist(),  # pyright: ignore[reportArgumentType]
+        color=(0.0, 0.0, 0.0),
+        marker="o",
+        # s=(intensity * 20.0).tolist(),  # pyright: ignore[reportArgumentType]
+        # s=plot_points_s.tolist(),
+        # zorder=6,
+    )
+
     # ax.plot(xs, ys, zs)
 
     # # fixed_points, ct = g._points.filter(lambda x: x.fixed)
@@ -139,10 +176,10 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
     #     plot_errors.tuple_map(lambda p, e: jnp.linalg.norm(e) > 0.2 * areg.pound)
     # )
 
-    def _plot_errors(x: point, e: Array):
-        cd = x.coords / areg.m
-        v = e / areg.pound * 2
-        return jnp.stack([cd, cd + v]), cd + v, jnp.maximum(jnp.linalg.norm(v), 0.2)
+    # def _plot_errors(x: point, e: Array):
+    #     cd = x.coords / areg.m
+    #     v = e / areg.pound * 2
+    #     return jnp.stack([cd, cd + v]), cd + v, jnp.maximum(jnp.linalg.norm(v), 0.2)
 
     # print("count:", ct)
     # ct = int(ct)
