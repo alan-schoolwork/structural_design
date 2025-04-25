@@ -75,8 +75,8 @@ class plot_graph_args(eqx.Module):
 
 
 def plot_graph_forces(arg: plot_graph_args):
-    # fig = plt.figure(figsize=(18, 8))
-    fig = plt.figure()
+    fig = plt.figure(figsize=(18, 8))
+    # fig = plt.figure()
     # fig.suptitle(
     #     "redesign (forces are scaled down 2x when drawn, compared to previous plots)",
     #     fontsize=32,
@@ -121,12 +121,13 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
             on_true=_color_from_force(x, jnp.array([1.0, 0.0, 0.0])),
             on_false=_color_from_force(-x, jnp.array([0.0, 0.0, 1.0])),
         )
-        width = jnp.abs(x) / f_max * 10 + 0.2
+        # width = jnp.minimum(jnp.abs(x) / f_max, 1.0) * 10 + 0.2
+        width = jnp.minimum(jnp.abs(x) / f_max, 1.0) * 10 + 1.0
         return color, width
 
     lines, (colors, linewidths) = (
         batched_zip(g._connections, forces)
-        .filter_concrete(lambda c_f: c_f[1] != 0.0)
+        .filter_concrete(lambda c_f: quantity(jnp.abs(c_f[1])).m_arr > 1e-5)
         .tuple_map(
             lambda c, f: (
                 jnp.stack([g.get_point(c.a).coords, g.get_point(c.b).coords]),
@@ -146,7 +147,7 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
     def _plot_external_fs(x: point, f: Array):
         cd = x.coords / areg.m
         f_n = jnp.linalg.norm(f)
-        cd_other = cd - f / f_max * 10.0
+        cd_other = cd - f / f_max * 20.0
         return jnp.stack([cd_other, cd]), color_width_from_force(f_n), cd_other
 
     points_external_fs, _count = batched_zip(g._points, g.sum_annotations()).filter(

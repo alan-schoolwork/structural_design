@@ -71,7 +71,7 @@ def build_graph() -> graph_t:
     # )
 
     z_offset_by_x = jnp.linspace(0.0, -15.0, n) * areg.ft
-    z_factor_x = jnp.linspace(1.0, 0.1, n)
+    z_factor_x = jnp.linspace(1.0, 0.2, n)
     z_offset_by_a = jnp.array([0.0, 10.0, 12.9, 10.0] * n_sectors) * areg.ft
 
     point_coords = (
@@ -106,6 +106,7 @@ def build_graph() -> graph_t:
                         on_false=0.1 * force_per_deform_c,
                     ),
                     density=0.0 * weight_c / areg.m,
+                    # compression_only=i % n_angle_per_sector != 0,
                 )
             )
         )
@@ -121,12 +122,13 @@ def build_graph() -> graph_t:
                     b,
                     force_per_deform=0.1 * force_per_deform_c,
                     density=1.0 * weight_c / areg.m,
+                    compression_only=True,
                 )
             )
         ).uf
     )
 
-    # test?
+    # diagonal
     g = g.add_connection_batched(
         batched.arange(n - 1)
         .map(
@@ -141,7 +143,7 @@ def build_graph() -> graph_t:
                     b,
                     force_per_deform=0.1 * force_per_deform_c,
                     density=0.0 * weight_c / areg.m,
-                    # compression_only=True,
+                    compression_only=True,
                 )
             )
         )
@@ -167,17 +169,72 @@ def build_graph() -> graph_t:
         ).uf
     )
 
+    # g = g.add_connection_batched(
+    #     batched_zip(
+    #         points[0],
+    #         points[0].roll(2),
+    #     ).tuple_map(
+    #         lambda a, b: connection(
+    #             a,
+    #             b,
+    #             force_per_deform=0.1 * force_per_deform_c,
+    #             density=0.0 * weight_c / areg.m,
+    #         )
+    #     )
+    # )
+
+    # # test
+    # for i in [1, 2, 3]:
+    #     g = g.add_connection_batched(
+    #         batched_zip(
+    #             points_sectors[0, :, i - 1],
+    #             points_sectors[0, :, i + 1],
+    #         ).tuple_map(
+    #             lambda a, b: connection(
+    #                 a,
+    #                 b,
+    #                 force_per_deform=0.1 * force_per_deform_c,
+    #                 density=0.0 * weight_c / areg.m,
+    #             )
+    #         )
+    #     )
+
     # test
+    for i in [0, 1]:
+        for j in [1, 2, 3]:
+            g = g.add_connection_batched(
+                batched.concat(
+                    [
+                        batched_zip(
+                            points_sectors[0, :, j],
+                            points_sectors[i, :, 0],
+                        ),
+                        batched_zip(
+                            points_sectors[0, :, j],
+                            points_sectors[i, :, 0].roll(-1),
+                        ),
+                    ]
+                ).tuple_map(
+                    lambda a, b: connection(
+                        a,
+                        b,
+                        force_per_deform=0.5 * force_per_deform_c,
+                        density=0.0 * weight_c / areg.m,
+                    )
+                )
+            )
+
+    # test2
     for i in [1, 2, 3]:
         g = g.add_connection_batched(
             batched_zip(
-                points_sectors[0, :, i],
-                points_sectors[0, :, i].roll(1),
+                points_sectors[-1, :, i],
+                points_sectors[-1, :, i].roll(1),
             ).tuple_map(
                 lambda a, b: connection(
                     a,
                     b,
-                    force_per_deform=5.0 * force_per_deform_c,
+                    force_per_deform=1.0 * force_per_deform_c,
                     density=0.0 * weight_c / areg.m,
                 )
             )
@@ -205,5 +262,14 @@ def build_graph() -> graph_t:
             ),
         )
     )
+
+    # g = g.add_external_force_batched(
+    #     points[5:10, 32:37].map(
+    #         lambda p: force_annotation(
+    #             p,
+    #             jnp.array([0.0, 0.0, -5.0]) * areg.weight_c,
+    #         )
+    #     ),
+    # )
 
     return g
