@@ -85,9 +85,9 @@ def plot_graph_forces(arg: plot_graph_args):
     computed_zorder = True
     ax = fig.add_subplot(111, projection="3d", computed_zorder=computed_zorder)
     assert isinstance(ax, Axes3D)
-    ax.set_xlim(-20, 10)
-    ax.set_ylim(-10, 20)
-    ax.set_zlim(-10, 20)
+    ax.set_xlim(-30, 15)
+    ax.set_ylim(-15, 30)
+    ax.set_zlim(-15, 30)
 
     plot_graph_forces_ax(ax, arg)
 

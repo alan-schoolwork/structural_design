@@ -24,7 +24,7 @@ from lib.utils import (
     tree_select,
     vmap,
 )
-from pintax import areg, unitify
+from pintax import areg, convert_unit, unitify
 from pintax.unstable import pint_registry
 
 tag_pos = "oryx_tag_position"
@@ -69,11 +69,10 @@ def build_graph() -> graph_t:
     # mid_z_offset_a = oryx_var(
     #     "mid_z_offset_a", tag_external_force, 4.0, store_scale=1.0
     # )
-    mid_z_offset_a = 3.9
 
-    z_offset_by_x = jnp.linspace(0.0, -5, n) * areg.m
+    z_offset_by_x = jnp.linspace(0.0, -15.0, n) * areg.ft
     z_factor_x = jnp.linspace(1.0, 0.1, n)
-    z_offset_by_a = jnp.array([0.0, 3.0, mid_z_offset_a, 3.0] * n_sectors) * areg.m
+    z_offset_by_a = jnp.array([0.0, 10.0, 12.9, 10.0] * n_sectors) * areg.ft
 
     point_coords = (
         batched.create((x_pos, z_offset_by_x, z_factor_x), (n,))
@@ -104,7 +103,7 @@ def build_graph() -> graph_t:
                     force_per_deform=lax.select(
                         i % n_angle_per_sector == 0,
                         on_true=5.0 * force_per_deform_c,
-                        on_false=1.0 * force_per_deform_c,
+                        on_false=0.1 * force_per_deform_c,
                     ),
                     density=0.0 * weight_c / areg.m,
                 )
@@ -120,7 +119,7 @@ def build_graph() -> graph_t:
                 lambda a, b: connection(
                     a,
                     b,
-                    force_per_deform=1.0 * force_per_deform_c,
+                    force_per_deform=0.1 * force_per_deform_c,
                     density=1.0 * weight_c / areg.m,
                 )
             )
@@ -140,7 +139,7 @@ def build_graph() -> graph_t:
                 lambda a, b: connection(
                     a,
                     b,
-                    force_per_deform=1.0 * force_per_deform_c,
+                    force_per_deform=0.1 * force_per_deform_c,
                     density=0.0 * weight_c / areg.m,
                     # compression_only=True,
                 )
@@ -149,16 +148,13 @@ def build_graph() -> graph_t:
         .uf
     )
 
-    main_lines = points.reshape(
-        n,
-        n_sectors,
-        n_angle_per_sector,
-    )[:, :, 0]
-    assert main_lines.batch_dims() == (n, n_sectors)
+    points_sectors = points.reshape(n, n_sectors, n_angle_per_sector)
 
     # ring connections on main_lines
     g = g.add_connection_batched(
-        main_lines.enumerate1d(
+        points_sectors[jnp.array([0, -1]), :, 0]
+        # points_sectors[:, :, 0]
+        .enumerate1d(
             lambda i, p: batched_zip(p, p.roll(1)).tuple_map(
                 lambda a, b: connection(
                     a,
@@ -171,11 +167,27 @@ def build_graph() -> graph_t:
         ).uf
     )
 
+    # test
+    for i in [1, 2, 3]:
+        g = g.add_connection_batched(
+            batched_zip(
+                points_sectors[0, :, i],
+                points_sectors[0, :, i].roll(1),
+            ).tuple_map(
+                lambda a, b: connection(
+                    a,
+                    b,
+                    force_per_deform=5.0 * force_per_deform_c,
+                    density=0.0 * weight_c / areg.m,
+                )
+            )
+        )
+
     outer_ring = points[0]
     support_points = outer_ring.reshape(n_sectors, -1)[:, 0]
     assert support_points.batch_dims() == (n_sectors,)
 
-    support_points = points[0]
+    # support_points = points[0]
 
     # print("support_points", support_points)
     # assert False

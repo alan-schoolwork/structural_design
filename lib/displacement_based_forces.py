@@ -81,7 +81,10 @@ def aggregate_all_forces(
         weight = c.weight + c.density * v_len
         half_w = jnp.array([0, 0, weight]) / 2
 
-        disp_force = quantity(disp_force).m_arr * quantity(weight).u
+        _scale = quantity(weight).u / quantity(disp_force).u
+        debug_print("scaling disp_force:", _scale.a)
+
+        disp_force = disp_force * _scale.a
 
         ans1 = batched.create(force_annotation(c.a, -disp_force * v_dir - half_w))
         ans2 = batched.create(force_annotation(c.b, disp_force * v_dir - half_w))
