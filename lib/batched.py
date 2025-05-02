@@ -236,8 +236,14 @@ class batched(eqx.Module, Generic[T_co]):
     def map[T2](self, f: Callable[[T_co], T2]) -> batched[T2]:
         return batched_vmap(f, self)
 
-    def map1d[T2](self, f: Callable[[batched[T_co]], T2]) -> batched[T2]:
-        return vmap((self,), lambda me: batched.create(f(me)))
+    def map1d[T2](
+        self, f: Callable[[batched[T_co]], T2], in_axes: int = 0
+    ) -> batched[T2]:
+        return vmap(
+            (self,),
+            lambda me: batched.create(f(me)),
+            in_axes=self._in_axes_spec(in_axes),
+        )
 
     def tuple_map[*T1, T2](
         self: batched[tuple[*T1]], f: Callable[[*T1], T2]
@@ -311,9 +317,24 @@ class batched(eqx.Module, Generic[T_co]):
 
         return jax.vmap(inner)(batched.arange(n), self)
 
-    def enumerate1d[R](self, f: Callable[[ival, batched[T_co]], R]) -> batched[R]:
-        (n, *_) = self.batch_dims()
-        return vmap((jnp.arange(n), self), lambda i, me: batched.create(f(i, me)))
+    def _in_axes_spec(self, in_axes: int) -> int:
+        bds = self.batch_dims()
+        _n = bds[in_axes]
+        if in_axes < 0:
+            in_axes = len(bds) + in_axes
+        assert 0 <= in_axes and in_axes < len(bds)
+        return in_axes
+
+    def enumerate1d[R](
+        self, f: Callable[[ival, batched[T_co]], R], in_axes: int = 0
+    ) -> batched[R]:
+        n = self.batch_dims()[in_axes]
+        return vmap(
+            (jnp.arange(n), self),
+            lambda i, me: batched.create(f(i, me)),
+            in_axes=self._in_axes_spec(in_axes),
+            axis_size=n,
+        )
 
     def enumerate[R](
         self,

@@ -71,6 +71,11 @@ def build_graph() -> graph_t:
     # )
 
     z_offset_by_x = jnp.linspace(0.0, -15.0, n) * areg.ft
+
+    cs = jnp.cumsum(jnp.cumsum(jnp.linspace(1.0, 0.0, n)))
+    cs = cs - jnp.linspace(cs[0], cs[-1], len(cs))
+    z_offset_by_x_under_additional = cs * areg.ft
+
     z_factor_x = jnp.linspace(1.0, 0.2, n)
     z_offset_by_a = jnp.array([0.0, 10.0, 12.9, 10.0] * n_sectors) * areg.ft
 
@@ -151,22 +156,90 @@ def build_graph() -> graph_t:
     )
 
     points_sectors = points.reshape(n, n_sectors, n_angle_per_sector)
+    points_main = points_sectors[:, :, 0]
+
+    # points on the tension
+    point_coords_under = batched_zip(
+        points_main,
+        batched.create(
+            z_offset_by_x_under_additional[:, np.newaxis],
+            points_main.batch_dims(),
+            broadcast=True,
+        ),
+    ).tuple_map(lambda pid, z: (g.get_point(pid).coords + jnp.array([0, 0, z])))
+    g, points_under = g.add_point_batched(point_coords_under)
+
+    g = g.add_connection_batched(
+        points_under.map1d(
+            lambda p: batched_zip(p[1:], p[:-1]).tuple_map(
+                lambda a, b: connection(
+                    a,
+                    b,
+                    5.0 * force_per_deform_c,
+                    density=0.0 * weight_c / areg.m,
+                    # tension_only=True,
+                )
+            ),
+            in_axes=1,
+        ).uf
+    )
+
+    # tensions up
+    g = g.add_connection_batched(
+        batched_zip(points_under[1:-1, :], points_main[1:-1, :]).tuple_map(
+            lambda a, b: connection(
+                a,
+                b,
+                5.0 * force_per_deform_c,
+                density=0.0 * weight_c / areg.m,
+            )
+        )
+    )
+    # tensions diag
+    g = g.add_connection_batched(
+        batched_zip(points_under[1:-2, :], points_main[2:-1, :]).tuple_map(
+            lambda a, b: connection(
+                a,
+                b,
+                0.1 * force_per_deform_c,
+                density=0.0 * weight_c / areg.m,
+                tension_only=True,
+            )
+        )
+    )
+    # tensions diag
+    g = g.add_connection_batched(
+        batched_zip(points_under[2:-1, :], points_main[1:-2, :]).tuple_map(
+            lambda a, b: connection(
+                a,
+                b,
+                0.1 * force_per_deform_c,
+                density=0.0 * weight_c / areg.m,
+                tension_only=True,
+            )
+        )
+    )
 
     # ring connections on main_lines
     g = g.add_connection_batched(
-        points_sectors[jnp.array([0, -1]), :, 0]
-        # points_sectors[:, :, 0]
+        # points_sectors[jnp.array([0, -1]), :, 0]
+        points_sectors[:, :, 0]
         .enumerate1d(
             lambda i, p: batched_zip(p, p.roll(1)).tuple_map(
                 lambda a, b: connection(
                     a,
                     b,
-                    force_per_deform=5.0 * force_per_deform_c,
+                    force_per_deform=lax.select(
+                        (i == 0) | (i == n - 1),
+                        on_true=5.0 * force_per_deform_c,
+                        on_false=0.05 * force_per_deform_c,
+                    ),
                     density=0.0 * weight_c / areg.m,
                     tension_only=(i != 0),
                 )
             )
-        ).uf
+        )
+        .uf
     )
 
     # g = g.add_connection_batched(

@@ -55,6 +55,7 @@ def main():
 
     # ans = jit(solve_forces)(graph_fn, graph_ex, extra_vars)
 
+    plt.ion()
     plot_graph_forces(
         plot_graph_args(
             graph=ans.graph,

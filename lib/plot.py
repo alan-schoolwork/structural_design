@@ -127,14 +127,13 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
 
     lines, (colors, linewidths) = (
         batched_zip(g._connections, forces)
-        .filter_concrete(lambda c_f: quantity(jnp.abs(c_f[1])).m_arr > 1e-5)
+        # .filter_concrete(lambda c_f: quantity(jnp.abs(c_f[1])).m_arr > 1e-5)
         .tuple_map(
             lambda c, f: (
                 jnp.stack([g.get_point(c.a).coords, g.get_point(c.b).coords]),
                 color_width_from_force(f),
             )
-        )
-        .unflatten()
+        ).unflatten()
     )
     line_collection = Line3DCollection(
         (lines / areg.m).tolist(),
