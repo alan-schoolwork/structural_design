@@ -142,6 +142,16 @@ class batched(eqx.Module, Generic[T_co]):
         return tree_unbatch(batched.create(val), dims)
 
     @staticmethod
+    def create_stack[T2](
+        val: Sequence[T2], batch_dims: tuple[int, ...] = ()
+    ) -> batched[T2]:
+        return batched.stack([batched.create(x, batch_dims) for x in val], axis=0)
+
+    @staticmethod
+    def create_array(x: Array) -> batched[Array]:
+        return batched.create(x, x.shape)
+
+    @staticmethod
     def _unreduce[T2](bds: tuple[int, ...], val: T2) -> batched[T2]:
         return batched.create(val, bds)
 

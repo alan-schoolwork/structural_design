@@ -136,7 +136,7 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
         ).unflatten()
     )
     line_collection = Line3DCollection(
-        (lines / areg.m).tolist(),
+        (lines / areg.ft).tolist(),
         colors=colors.tolist(),
         linewidths=linewidths.tolist(),
         # zorder=1,
@@ -144,7 +144,7 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
     ax.add_collection3d(line_collection)
 
     def _plot_external_fs(x: point, f: Array):
-        cd = x.coords / areg.m
+        cd = x.coords / areg.ft
         f_n = jnp.linalg.norm(f)
         cd_other = cd - f / f_max * 20.0
         return jnp.stack([cd_other, cd]), color_width_from_force(f_n), cd_other
@@ -186,7 +186,7 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
     # )
 
     # def _plot_errors(x: point, e: Array):
-    #     cd = x.coords / areg.m
+    #     cd = x.coords / areg.ft
     #     v = e / areg.pound * 2
     #     return jnp.stack([cd, cd + v]), cd + v, jnp.maximum(jnp.linalg.norm(v), 0.2)
 
@@ -218,3 +218,86 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
+
+
+def plot_graph_forces2d(arg: plot_graph_args):
+    g = arg.graph
+    forces = arg.connection_forces
+
+    fig = plt.figure()
+    ax = fig.add_subplot()
+    ax.set_xlim(0, 120)
+    ax.set_ylim(0, 40)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_aspect("equal")
+
+    f_max = jnp.max(jnp.abs(forces.unflatten()))
+    print("f_max", f_max)
+    f_max = arg.f_max if arg.f_max is not None else f_max
+
+    def _color_from_force(x: fval, _end: Array):
+        x = lax.min(x / f_max * 10, 1.0)
+        return x * _end + (1 - x) * jnp.array([1.0, 1.0, 1.0]) * 0.5
+
+    def color_width_from_force(x: fval):
+        color = lax.select(
+            x > 0,
+            on_true=_color_from_force(x, jnp.array([1.0, 0.0, 0.0])),
+            on_false=_color_from_force(-x, jnp.array([0.0, 0.0, 1.0])),
+        )
+        # width = jnp.minimum(jnp.abs(x) / f_max, 1.0) * 10 + 0.2
+        width = jnp.minimum(jnp.abs(x) / f_max, 1.0) * 10 + 1.0
+        return color, width
+
+    lines, (colors, linewidths) = (
+        batched_zip(g._connections, forces)
+        # .filter_concrete(lambda c_f: quantity(jnp.abs(c_f[1])).m_arr > 1e-5)
+        .tuple_map(
+            lambda c, f: (
+                jnp.stack([g.get_point(c.a).coords, g.get_point(c.b).coords]),
+                color_width_from_force(f),
+            )
+        ).unflatten()
+    )
+    line_collection = LineCollection(
+        (lines / areg.ft).tolist(),
+        colors=colors.tolist(),
+        linewidths=linewidths.tolist(),
+        # zorder=1,
+    )
+    ax.add_collection(line_collection)
+
+    # def _plot_external_fs(x: point, f: Array):
+    #     cd = x.coords / areg.ft
+    #     f_n = jnp.linalg.norm(f)
+    #     cd_other = cd - f / f_max * 20.0
+    #     return jnp.stack([cd_other, cd]), color_width_from_force(f_n), cd_other
+
+    # (
+    #     external_fs_segs,
+    #     (external_fs_colors, external_fs_linwidths),
+    #     external_fs_points,
+    # ) = (
+    #     batched_zip(g._points, g.sum_annotations())
+    #     .filter_concrete(lambda p_f: jnp.linalg.norm(p_f[1]) > 0.0)
+    #     .tuple_map(_plot_external_fs)
+    #     .unflatten()
+    # )
+    # ax.add_collection(
+    #     LineCollection(
+    #         external_fs_segs.tolist(),
+    #         colors=external_fs_colors.tolist(),
+    #         linewidths=external_fs_linwidths.tolist(),
+    #     )
+    # )
+    # ax.scatter(
+    #     external_fs_points[:, 0].tolist(),
+    #     external_fs_points[:, 1].tolist(),
+    #     color=(0.0, 0.0, 0.0),
+    #     marker="o",
+    #     s=20,
+    #     zorder=6,
+    # )
+
+    plt.show()

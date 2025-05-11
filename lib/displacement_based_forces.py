@@ -79,7 +79,7 @@ def aggregate_all_forces(
         v_dir = v / v_len  # vector a->b
 
         weight = c.weight + c.density * v_len
-        half_w = jnp.array([0, 0, weight]) / 2
+        half_w = jnp.array([*[0 for _ in range(g.dim - 1)], weight]) / 2
 
         _scale = quantity(weight).u / quantity(disp_force).u
         debug_print("scaling disp_force:", _scale.a)
