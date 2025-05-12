@@ -93,6 +93,10 @@ def plot_graph_forces(arg: plot_graph_args):
     ax.set_zlim(-5, 50)
     ax.set_aspect("equal")
 
+    current_elev = ax.elev
+    current_azim = ax.azim
+    ax.view_init(elev=current_elev + 5, azim=current_azim + 10)
+
     plot_graph_forces_ax(ax, arg)
 
 
@@ -232,8 +236,8 @@ def plot_graph_forces2d(arg: plot_graph_args):
     ax = fig.add_subplot()
     ax.set_xlim(arg.x_lim[0], arg.x_lim[1])
     ax.set_ylim(arg.y_lim[0], arg.y_lim[1])
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    # ax.set_xlabel("X")
+    # ax.set_ylabel("Y")
     ax.set_aspect("equal")
 
     f_max = jnp.max(jnp.abs(forces.unflatten()))

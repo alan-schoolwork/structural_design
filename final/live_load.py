@@ -204,8 +204,10 @@ def build_graph() -> graph_t:
     per_col = tot_live / 6 / 2
     debug_print("per_col", per_col)
 
-    # for ring in [outer_ring, inner_ring]:
-    for ring in [inner_ring]:
+    for ring in [outer_ring, inner_ring]:
+        ring = batched.concat([ring[:5], ring[-1:]])
+        # ring = ring[:6]
+        # for ring in [inner_ring]:
         g, viz_points = g.add_point_batched(
             ring.map(
                 lambda p: g.get_point(p).coords + jnp.array([0.0, 0, 10.0]) * areg.ft
@@ -218,7 +220,7 @@ def build_graph() -> graph_t:
             viz_points.enumerate(
                 lambda p, i: force_annotation(
                     p,
-                    jnp.array([0.0, 0.0, tree_select(i < 6, -per_col, 0.0)]),
+                    jnp.array([0.0, 0.0, -per_col]),
                     # jnp.array([0.0, 0.0, -100]) * weight_c,
                 )
             )

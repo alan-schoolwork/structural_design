@@ -64,6 +64,8 @@ def main():
             connection_forces=ans.connection_forces,
             # f_max=500.0 * areg.weight_c,
             f_max=1000.0 * areg.kpounds,
+            x_lim=(0, 100),
+            y_lim=(0, 40),
         )
     )
     # plt.show()

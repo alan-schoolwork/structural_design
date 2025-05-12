@@ -49,6 +49,9 @@ def misc2():
     print("outer", outer_r * 2 * math.pi)
     print("inner", inner_r * 2 * math.pi)
 
+    print("area", outer_r**2 * math.pi)
+    print("co2", 988 / (outer_r**2 * math.pi) * 1000)
+
 
 def force_diagram():
     outer_r = 178.712 / 2

@@ -57,19 +57,19 @@ def main():
 
     # ans = jit(solve_forces)(graph_fn, graph_ex, extra_vars)
 
-    plt.ion()
+    # plt.ion()
     plot_graph_forces(
         plot_graph_args(
             graph=ans.graph,
             connection_forces=ans.connection_forces,
             # f_max=500.0 * areg.weight_c,
-            f_max=500.0 * areg.kpounds,
+            f_max=1000.0 * areg.kpounds,
         )
     )
-    plt.show()
-    # plt.tight_layout()
-    # plt.savefig("output.png", dpi=300)
-    # plt.close()
+    # plt.show()
+    plt.tight_layout()
+    plt.savefig("live_load.png", dpi=300)
+    plt.close()
 
     g = ans.graph
 
