@@ -44,7 +44,7 @@ def build_graph() -> graph_t:
     force_per_deform_c = weight_c
 
     g = graph_t.create(
-        2,
+        3,
         connection_ex=connection(
             pointid.ex(),
             pointid.ex(),
@@ -54,105 +54,165 @@ def build_graph() -> graph_t:
         ),
     )
 
+    n_angle = 12
+
     outer_r = 178.712 * areg.ft / 2
     inner_r = 35.682 * areg.ft / 2
 
     outer_h = 30.0 * areg.ft
     inner_h = 10.0 * areg.ft
 
-    g, points = g.add_point_batched(
-        batched.create(
-            jnp.array(
-                [
-                    [-outer_r, outer_h],
-                    [-inner_r, inner_h],
-                    [inner_r, inner_h],
-                    [outer_r, outer_h],
-                ]
-            ),
-            (4,),
+    angles = batched.create_array(jnp.linspace(0, 2 * math.pi, n_angle + 1)[:-1])
+
+    def mk_default_connect(a: pointid, b: pointid):
+        return connection(
+            a,
+            b,
+            force_per_deform=1.0 * force_per_deform_c,
+            density=0.0 * weight_c / areg.ft,
+        )
+
+    g, outer_ring = g.add_point_batched(
+        angles.map(
+            lambda a: jnp.array([outer_r * jnp.cos(a), outer_r * jnp.sin(a), outer_h])
+        )
+    )
+    g, inner_ring = g.add_point_batched(
+        angles.map(
+            lambda a: jnp.array([inner_r * jnp.cos(a), inner_r * jnp.sin(a), inner_h])
         )
     )
 
     g = g.add_connection_batched(
-        batched_zip(points[1:], points[:-1]).tuple_map(
-            lambda a, b: connection(
-                a,
-                b,
-                force_per_deform=1.0 * force_per_deform_c,
-            )
-        )
+        batched_zip(outer_ring, outer_ring.roll(1)).tuple_map(mk_default_connect)
     )
-
-    def add_external(
-        g: graph_t, p: pointid, direction: Array, f: Array, tension_only: bool = False
-    ):
-        g, p_dir = g.add_point(g.get_point(p).coords + direction)
-        g = g.add_connection_batched(
-            batched.create(
-                connection(
-                    p,
-                    p_dir,
-                    tension_only=tension_only,
-                    force_per_deform=1.0 * force_per_deform_c,
-                    density=0.0 * weight_c / areg.ft,
-                )
-            )
-        )
-        g = g.add_external_force(force_annotation(p_dir, f))
-        return g
+    g = g.add_connection_batched(
+        batched_zip(inner_ring, inner_ring.roll(1)).tuple_map(mk_default_connect)
+    )
+    g = g.add_connection_batched(
+        batched_zip(inner_ring, outer_ring).tuple_map(mk_default_connect)
+    )
 
     ####################
     # supports
     ####################
 
     # column
-    for i in [0, 3]:
-        g = add_external(
-            g,
-            points[i].unwrap(),
-            jnp.array([0.0, -outer_h]),
-            jnp.array(
-                [0.0, oryx_var(f"outer_support_z_{i}", tag_external_force, weight_c)]
-            ),
+    g, outer_down = g.add_point_batched(
+        angles.map(
+            lambda a: jnp.array([outer_r * jnp.cos(a), outer_r * jnp.sin(a), 0.0])
         )
+    )
+    g = g.add_connection_batched(
+        batched_zip(outer_ring, outer_down).tuple_map(mk_default_connect)
+    )
+    g = g.add_external_force_batched(
+        batched_zip(
+            outer_down,
+            batched.create(
+                oryx_var(
+                    f"outer_down",
+                    tag_external_force,
+                    jnp.zeros((n_angle, 3)) * weight_c,
+                ),
+                (n_angle,),
+            ),
+        ).tuple_map(force_annotation)
+    )
 
     # tension
-    for i in [0, 3]:
-        g = add_external(
-            g,
-            points[i].unwrap(),
-            jnp.array([(-10 if i == 0 else 10) * areg.ft, -outer_h]),
-            oryx_var(
-                f"outer_tension_{i}",
-                tag_external_force,
-                jnp.array([0.0 * weight_c, 0.0 * weight_c]),
-            ),
-            tension_only=True,
+    for d in ["left", "right"]:
+        d_mul = -1 if d == "left" else 1
+        ang_bias = 5.0 / 360 * 2 * math.pi
+        g, outer_slant = g.add_point_batched(
+            angles.map(
+                lambda a: jnp.array(
+                    [
+                        (outer_r + 10 * areg.ft) * jnp.cos(a + ang_bias * d_mul),
+                        (outer_r + 10 * areg.ft) * jnp.sin(a + ang_bias * d_mul),
+                        0.0,
+                    ]
+                )
+            )
         )
+        g = g.add_connection_batched(
+            batched_zip(outer_ring, outer_slant).tuple_map(
+                lambda a, b: connection(
+                    a,
+                    b,
+                    tension_only=True,
+                    force_per_deform=1.0 * force_per_deform_c,
+                )
+            )
+        )
+        g = g.add_external_force_batched(
+            batched_zip(
+                outer_slant,
+                batched.create(
+                    oryx_var(
+                        f"outer_slant_{d}",
+                        tag_external_force,
+                        jnp.zeros((n_angle, 3)) * weight_c,
+                    ),
+                    (n_angle,),
+                ),
+            ).tuple_map(force_annotation)
+        )
+
+    # tension, center
+    g, inner_down = g.add_point_batched(
+        angles.map(
+            lambda a: jnp.array(
+                [inner_r * 0.6 * jnp.cos(a), inner_r * 0.6 * jnp.sin(a), 0.0]
+            )
+        )
+    )
+    g = g.add_connection_batched(
+        batched_zip(inner_ring, inner_down).tuple_map(
+            lambda a, b: connection(
+                a,
+                b,
+                tension_only=True,
+                force_per_deform=100.0 * force_per_deform_c,
+            )
+        )
+    )
+    g = g.add_external_force_batched(
+        batched_zip(
+            inner_down,
+            batched.create(
+                oryx_var(
+                    f"inner_down",
+                    tag_external_force,
+                    jnp.zeros((n_angle, 3)) * weight_c,
+                ),
+                (n_angle,),
+            ),
+        ).tuple_map(force_annotation)
+    )
 
     ####################
     # loads
     ####################
 
-    fixed_load = 200 * weight_c
-    live_load = 50 * weight_c
-
-    for i, f in enumerate(
-        [
-            fixed_load / 2,
-            fixed_load / 2,
-            (fixed_load + live_load) / 2,
-            (fixed_load + live_load) / 2,
-        ]
-    ):
-        g = add_external(
-            g,
-            points[i].unwrap(),
-            jnp.array([0.0, 5.0 * areg.ft]),
-            jnp.array([0.0, -f]),
+    # for ring in [outer_ring, inner_ring]:
+    for ring in [inner_ring]:
+        g, viz_points = g.add_point_batched(
+            ring.map(
+                lambda p: g.get_point(p).coords + jnp.array([0.0, 0, 5.0]) * areg.ft
+            )
         )
-
-    ####################
+        g = g.add_connection_batched(
+            batched_zip(ring, viz_points).tuple_map(mk_default_connect)
+        )
+        g = g.add_external_force_batched(
+            viz_points.enumerate(
+                lambda p, i: force_annotation(
+                    p,
+                    jnp.array([0.0, 0.0, tree_select(i < 6, 0.0, -50.0)]) * weight_c,
+                    # jnp.array([0.0, 0.0, -100]) * weight_c,
+                )
+            )
+        )
 
     return g

@@ -88,9 +88,10 @@ def plot_graph_forces(arg: plot_graph_args):
     computed_zorder = True
     ax = fig.add_subplot(111, projection="3d", computed_zorder=computed_zorder)
     assert isinstance(ax, Axes3D)
-    ax.set_xlim(-30, 15)
-    ax.set_ylim(-15, 30)
-    ax.set_zlim(-15, 30)
+    ax.set_xlim(-80, 80)
+    ax.set_ylim(-80, 80)
+    ax.set_zlim(-5, 50)
+    ax.set_aspect("equal")
 
     plot_graph_forces_ax(ax, arg)
 
@@ -146,39 +147,39 @@ def plot_graph_forces_ax(ax: Axes3D, arg: plot_graph_args):
     )
     ax.add_collection3d(line_collection)
 
-    def _plot_external_fs(x: point, f: Array):
-        cd = x.coords / areg.ft
-        f_n = jnp.linalg.norm(f)
-        cd_other = cd - f / f_max * 20.0
-        return jnp.stack([cd_other, cd]), color_width_from_force(f_n), cd_other
+    # def _plot_external_fs(x: point, f: Array):
+    #     cd = x.coords / areg.ft
+    #     f_n = jnp.linalg.norm(f)
+    #     cd_other = cd - f / f_max * 20.0
+    #     return jnp.stack([cd_other, cd]), color_width_from_force(f_n), cd_other
 
-    points_external_fs, _count = batched_zip(g._points, g.sum_annotations()).filter(
-        lambda p_f: jnp.linalg.norm(p_f[1]) > 0.0
-    )
-    (
-        external_fs_segs,
-        (external_fs_colors, external_fs_linwidths),
-        external_fs_points,
-    ) = (
-        points_external_fs[: int(_count)].tuple_map(_plot_external_fs).unflatten()
-    )
-    ax.add_collection3d(
-        Line3DCollection(
-            external_fs_segs.tolist(),
-            colors=external_fs_colors.tolist(),
-            linewidths=external_fs_linwidths.tolist(),
-        )
-    )
-    ax.scatter(
-        external_fs_points[:, 0].tolist(),
-        external_fs_points[:, 1].tolist(),
-        external_fs_points[:, 2].tolist(),  # pyright: ignore[reportArgumentType]
-        color=(0.0, 0.0, 0.0),
-        marker="o",
-        # s=(intensity * 20.0).tolist(),  # pyright: ignore[reportArgumentType]
-        # s=plot_points_s.tolist(),
-        # zorder=6,
-    )
+    # points_external_fs, _count = batched_zip(g._points, g.sum_annotations()).filter(
+    #     lambda p_f: jnp.linalg.norm(p_f[1]) > 0.0
+    # )
+    # (
+    #     external_fs_segs,
+    #     (external_fs_colors, external_fs_linwidths),
+    #     external_fs_points,
+    # ) = (
+    #     points_external_fs[: int(_count)].tuple_map(_plot_external_fs).unflatten()
+    # )
+    # ax.add_collection3d(
+    #     Line3DCollection(
+    #         external_fs_segs.tolist(),
+    #         colors=external_fs_colors.tolist(),
+    #         linewidths=external_fs_linwidths.tolist(),
+    #     )
+    # )
+    # ax.scatter(
+    #     external_fs_points[:, 0].tolist(),
+    #     external_fs_points[:, 1].tolist(),
+    #     external_fs_points[:, 2].tolist(),  # pyright: ignore[reportArgumentType]
+    #     color=(0.0, 0.0, 0.0),
+    #     marker="o",
+    #     # s=(intensity * 20.0).tolist(),  # pyright: ignore[reportArgumentType]
+    #     # s=plot_points_s.tolist(),
+    #     # zorder=6,
+    # )
 
     # ax.plot(xs, ys, zs)
 
