@@ -13,7 +13,7 @@ from matplotlib.collections import LineCollection
 import pintax.oryx_ext as _
 from lib.batched import batched, batched_vmap, batched_zip
 from lib.graph import connection, force_annotation, graph_t, pointid
-from lib.jax_utils import oryx_var
+from lib.jax_utils import debug_print, oryx_var
 from lib.lstsq import flstsq
 from lib.utils import (
     allow_autoreload,
@@ -40,7 +40,7 @@ def build_graph() -> graph_t:
     print("build_graph: tracing")
 
     # force_per_deform_c = areg.force_per_deform_c
-    weight_c = areg.weight_c
+    weight_c = areg.kpounds
     force_per_deform_c = weight_c
 
     g = graph_t.create(
@@ -200,6 +200,10 @@ def build_graph() -> graph_t:
     # loads
     ####################
 
+    tot_live = 30 * areg.pound / areg.ft**2 * (outer_r**2) * math.pi / 2
+    per_col = tot_live / 6 / 2
+    debug_print("per_col", per_col)
+
     # for ring in [outer_ring, inner_ring]:
     for ring in [inner_ring]:
         g, viz_points = g.add_point_batched(
@@ -214,7 +218,7 @@ def build_graph() -> graph_t:
             viz_points.enumerate(
                 lambda p, i: force_annotation(
                     p,
-                    jnp.array([0.0, 0.0, tree_select(i < 6, -40.0, 0.0)]) * weight_c,
+                    jnp.array([0.0, 0.0, tree_select(i < 6, -per_col, 0.0)]),
                     # jnp.array([0.0, 0.0, -100]) * weight_c,
                 )
             )

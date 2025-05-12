@@ -24,7 +24,7 @@ from lib.jax_utils import fn_as_traced, oryx_unzip
 from lib.lstsq import flstsq
 from lib.plot import plot_graph_args, plot_graph_forces, plot_graph_forces2d
 from lib.utils import allow_autoreload, concatenate, fval, jit, tree_at_, vmap
-from pintax import areg, unitify, ureg
+from pintax import areg, quantity, unitify, ureg
 
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_platform_name", "cpu")
@@ -63,12 +63,28 @@ def main():
             graph=ans.graph,
             connection_forces=ans.connection_forces,
             # f_max=500.0 * areg.weight_c,
-            f_max=1000.0 * areg.weight_c,
+            f_max=500.0 * areg.kpounds,
         )
     )
     plt.show()
     # plt.tight_layout()
     # plt.savefig("output.png", dpi=300)
     # plt.close()
+
+    g = ans.graph
+
+    forces = batched_zip(ans.graph._connections, ans.connection_forces).tuple_map(
+        lambda c, f: jnp.concat(
+            [
+                quantity(g.get_point(c.a).coords).m,
+                # jnp.array([-1]),
+                quantity(g.get_point(c.b).coords).m,
+                # jnp.array([-1]),
+                quantity(jnp.array([f])).m,
+            ]
+        )
+    )
+    print("forces:")
+    print(forces)
 
     return ans

@@ -40,7 +40,8 @@ def build_graph() -> graph_t:
     print("build_graph: tracing")
 
     # force_per_deform_c = areg.force_per_deform_c
-    weight_c = areg.weight_c
+    # weight_c = areg.weight_c
+    weight_c = areg.kpounds
     force_per_deform_c = weight_c
 
     g = graph_t.create(
@@ -125,6 +126,9 @@ def build_graph() -> graph_t:
         )
     )
 
+    force_dist = top_row.map(lambda p: g.get_point(p).coords[0]).arr
+    force_dist = force_dist / force_dist.sum() * 167 * areg.kpounds
+
     g, top_forces_points = g.add_point_batched(
         top_row.map(
             lambda pid: (g.get_point(pid).coords + jnp.array([0, 5.0 * areg.ft]))
@@ -134,10 +138,10 @@ def build_graph() -> graph_t:
         batched_zip(top_row, top_forces_points).tuple_map(mk_default_connect)
     )
     g = g.add_external_force_batched(
-        top_forces_points.map(
-            lambda p: force_annotation(
+        batched_zip(top_forces_points, batched.create_array(force_dist)).tuple_map(
+            lambda p, f: force_annotation(
                 p,
-                jnp.array([0, -g.get_point(p).coords[0] * weight_c / areg.m]),
+                jnp.array([0, -f]),
             ),
         )
     )
