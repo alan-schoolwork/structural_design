@@ -63,13 +63,13 @@ def main():
             graph=ans.graph,
             connection_forces=ans.connection_forces,
             # f_max=500.0 * areg.weight_c,
-            f_max=500.0 * areg.kpounds,
+            f_max=1000.0 * areg.kpounds,
         )
     )
-    plt.show()
-    # plt.tight_layout()
-    # plt.savefig("output.png", dpi=300)
-    # plt.close()
+    # plt.show()
+    plt.tight_layout()
+    plt.savefig("section.png", dpi=300)
+    plt.close()
 
     g = ans.graph
 
