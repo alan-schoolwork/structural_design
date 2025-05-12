@@ -123,7 +123,7 @@ def build_graph() -> graph_t:
     # tension
     for d in ["left", "right"]:
         d_mul = -1 if d == "left" else 1
-        ang_bias = 5.0 / 360 * 2 * math.pi
+        ang_bias = 5.0 * areg.degrees
         g, outer_slant = g.add_point_batched(
             angles.map(
                 lambda a: jnp.array(
@@ -141,7 +141,7 @@ def build_graph() -> graph_t:
                     a,
                     b,
                     tension_only=True,
-                    force_per_deform=1.0 * force_per_deform_c,
+                    force_per_deform=0.002 * force_per_deform_c,
                 )
             )
         )
@@ -160,10 +160,15 @@ def build_graph() -> graph_t:
         )
 
     # tension, center
+    lean_center = inner_h * jnp.tan(45 * areg.degrees)
     g, inner_down = g.add_point_batched(
         angles.map(
             lambda a: jnp.array(
-                [inner_r * 0.6 * jnp.cos(a), inner_r * 0.6 * jnp.sin(a), 0.0]
+                [
+                    (inner_r - lean_center) * jnp.cos(a),
+                    (inner_r - lean_center) * jnp.sin(a),
+                    0.0,
+                ]
             )
         )
     )
@@ -173,7 +178,7 @@ def build_graph() -> graph_t:
                 a,
                 b,
                 tension_only=True,
-                force_per_deform=100.0 * force_per_deform_c,
+                force_per_deform=1.0 * force_per_deform_c,
             )
         )
     )
@@ -199,7 +204,7 @@ def build_graph() -> graph_t:
     for ring in [inner_ring]:
         g, viz_points = g.add_point_batched(
             ring.map(
-                lambda p: g.get_point(p).coords + jnp.array([0.0, 0, 5.0]) * areg.ft
+                lambda p: g.get_point(p).coords + jnp.array([0.0, 0, 10.0]) * areg.ft
             )
         )
         g = g.add_connection_batched(
@@ -209,7 +214,7 @@ def build_graph() -> graph_t:
             viz_points.enumerate(
                 lambda p, i: force_annotation(
                     p,
-                    jnp.array([0.0, 0.0, tree_select(i < 6, 0.0, -50.0)]) * weight_c,
+                    jnp.array([0.0, 0.0, tree_select(i < 6, -40.0, 0.0)]) * weight_c,
                     # jnp.array([0.0, 0.0, -100]) * weight_c,
                 )
             )

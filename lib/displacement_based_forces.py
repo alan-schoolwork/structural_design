@@ -130,7 +130,7 @@ def solve_forces[T](
     )
 
     _solver = GradientDescent(n_steps=100000, learning_rate=1.0)
-    solver = Lstsq(n_iters=10)
+    solver = Lstsq(n_iters=20)
 
     ans = solver.solve(lambda x: get_equations(x)[0], f_args)
 
