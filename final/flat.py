@@ -71,16 +71,15 @@ def build_graph() -> graph_t:
 
     z_offset_by_x = jnp.linspace(30.0, 10.0, n) * areg.ft
 
-    cs = jnp.cumsum(jnp.cumsum(jnp.linspace(1.0, 0.0, n)))
+    cs = jnp.cumsum(jnp.cumsum(jnp.linspace(1.0, inner_r / outer_r, n)))
     cs = cs - jnp.linspace(cs[0], cs[-1], len(cs))
-    cs /= 2
-    z_offset_by_x_under_additional = cs * areg.ft
-    # z_offset_by_x_under_additional = oryx_var(
-    #     "z_offset_by_x_under_additional",
-    #     tag_external_force,
-    #     cs * areg.ft,
-    #     store_scale=2000000,
-    # )
+    cs /= 3
+    z_offset_by_x_under_additional = oryx_var(
+        "z_offset_by_x_under_additional",
+        tag_external_force,
+        cs * areg.ft,
+        store_scale=2000000,
+    )
 
     g, top_row = g.add_point_batched(
         batched.create((x_pos, z_offset_by_x), (n,)).map(jnp.array)

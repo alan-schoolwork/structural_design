@@ -73,6 +73,9 @@ class plot_graph_args(eqx.Module):
 
     f_max: fval | None = None
 
+    x_lim: tuple[float, float] = (0, 120)
+    y_lim: tuple[float, float] = (0, 40)
+
 
 def plot_graph_forces(arg: plot_graph_args):
     fig = plt.figure(figsize=(18, 8))
@@ -226,8 +229,8 @@ def plot_graph_forces2d(arg: plot_graph_args):
 
     fig = plt.figure()
     ax = fig.add_subplot()
-    ax.set_xlim(0, 120)
-    ax.set_ylim(0, 40)
+    ax.set_xlim(arg.x_lim[0], arg.x_lim[1])
+    ax.set_ylim(arg.y_lim[0], arg.y_lim[1])
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_aspect("equal")
